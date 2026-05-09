@@ -41,16 +41,27 @@ async function readJson(path: string) {
   }
 }
 
-function tokenFromJson(data: Record<string, unknown> | undefined) {
+function tokenFromJson(data: Record<string, unknown> | undefined): string | undefined {
   if (!data) return undefined
   for (const key of ['api_key', 'apiKey', 'access_token', 'accessToken', 'id_token']) {
     const value = data[key]
     if (typeof value === 'string' && value.trim()) return value.trim()
   }
+  const tokens = data.tokens
+  if (tokens && typeof tokens === 'object') {
+    const token: string | undefined = tokenFromJson(tokens as Record<string, unknown>)
+    if (token) return token
+  }
   const auth = data.auth
-  if (auth && typeof auth === 'object') return tokenFromJson(auth as Record<string, unknown>)
+  if (auth && typeof auth === 'object') {
+    const token: string | undefined = tokenFromJson(auth as Record<string, unknown>)
+    if (token) return token
+  }
   const openai = data.openai
-  if (openai && typeof openai === 'object') return tokenFromJson(openai as Record<string, unknown>)
+  if (openai && typeof openai === 'object') {
+    const token: string | undefined = tokenFromJson(openai as Record<string, unknown>)
+    if (token) return token
+  }
   return undefined
 }
 
