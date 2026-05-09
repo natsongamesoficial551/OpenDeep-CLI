@@ -1,7 +1,8 @@
 import readline from 'node:readline/promises'
+import { emitKeypressEvents } from 'node:readline'
 import { stdin as input, stdout as output } from 'node:process'
 import chalk from 'chalk'
-import { ChatRuntimeState, OpenDeepConfig, ProviderAdapter, ProviderConfig, SlashCommand } from '../types.js'
+import { ChatRuntimeState, OpenDeepConfig, ProviderAdapter, ProviderConfig, SessionRecord, SlashCommand } from '../types.js'
 import { createProvider, getProviderConfigs, resolveModel } from '../providers/registry.js'
 import { safeError, redactObject } from '../security/redact.js'
 import { renderCommandList, renderError, renderHeader, renderNotice, renderUserBubble } from '../ui/chatRenderer.js'
@@ -76,8 +77,206 @@ async function initialState(config: OpenDeepConfig): Promise<ChatRuntimeState> {
 
 type PromptReader = { question(query: string): Promise<string> }
 
+type PickerState = {
+  query: string
+  selected: number
+}
+
 function optionList(items: string[]) {
   return items.map((item, index) => `${String(index + 1).padStart(2, '0')}. ${item}`).join('\n')
+}
+
+function formatSessionChoice(session: SessionRecord) {
+  const date = session.updatedAt?.slice(0, 10) ?? 'sem data'
+  return `${session.id.slice(0, 8)}  ${date}  ${session.title}  (${session.projectPath})`
+}
+
+function clearRenderedLines(lines: number) {
+  for (let i = 0; i < lines; i += 1) output.write('\x1b[1A\r\x1b[2K')
+}
+
+async function pickByArrows(title: string, items: string[], emptyLabel = 'Nenhum item disponível') {
+  if (!items.length || !input.isTTY) return undefined
+  const stdin = input
+  const wasRaw = stdin.isRaw
+  emitKeypressEvents(stdin)
+  stdin.setRawMode(true)
+  stdin.resume()
+
+  const state: PickerState = { query: '', selected: 0 }
+  let drawn = 0
+
+  const filtered = () => items
+    .map((item, index) => ({ item, index }))
+    .filter((entry) => entry.item.toLowerCase().includes(state.query.toLowerCase()))
+
+  const render = () => {
+    if (drawn) clearRenderedLines(drawn)
+    const rows = filtered()
+    const lines: string[] = [
+      chalk.bold(`${title}  ${chalk.dim('(↑/↓ navega, Enter seleciona, Esc cancela)')}`),
+      chalk.dim(`Filtro: ${state.query || '(vazio)'}`),
+    ]
+    if (!rows.length) lines.push(chalk.yellow(emptyLabel))
+    else {
+      const max = Math.min(rows.length, 8)
+      if (state.selected >= max) state.selected = 0
+      for (let i = 0; i < max; i += 1) {
+        const prefix = i === state.selected ? chalk.green('›') : ' '
+        lines.push(`${prefix} ${rows[i]?.item || ''}`)
+      }
+    }
+    output.write(`\n${lines.join('\n')}\n`)
+    drawn = lines.length + 1
+  }
+
+  render()
+  try {
+    return await new Promise<number | undefined>((resolve) => {
+      const onKey = (_str: string, key: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
+        const rows = filtered()
+        if (key.name === 'escape' || (key.ctrl && key.name === 'c')) {
+          stdin.off('keypress', onKey)
+          resolve(undefined)
+          return
+        }
+        if (key.name === 'up') {
+          if (rows.length) state.selected = (state.selected - 1 + Math.min(rows.length, 8)) % Math.min(rows.length, 8)
+          render()
+          return
+        }
+        if (key.name === 'down') {
+          if (rows.length) state.selected = (state.selected + 1) % Math.min(rows.length, 8)
+          render()
+          return
+        }
+        if (key.name === 'backspace') {
+          state.query = state.query.slice(0, -1)
+          state.selected = 0
+          render()
+          return
+        }
+        if (key.name === 'return') {
+          stdin.off('keypress', onKey)
+          if (!rows.length) {
+            resolve(undefined)
+            return
+          }
+          resolve(rows[state.selected]?.index)
+          return
+        }
+        const ch = key.sequence ?? ''
+        if (ch && ch >= ' ' && ch !== '\u007f' && !key.ctrl && !key.meta) {
+          state.query += ch
+          state.selected = 0
+          render()
+        }
+      }
+      stdin.on('keypress', onKey)
+    })
+  } finally {
+    if (drawn) clearRenderedLines(drawn)
+    if (!wasRaw) stdin.setRawMode(false)
+  }
+}
+
+async function readChatInput(rl: PromptReader) {
+  if (!input.isTTY) return (await rl.question(chalk.bold('› '))).trim()
+  const stdin = input
+  const wasRaw = stdin.isRaw
+  emitKeypressEvents(stdin)
+  stdin.setRawMode(true)
+  stdin.resume()
+
+  let buffer = ''
+  let selected = 0
+  let drawn = 0
+
+  const slashRows = () => {
+    if (!buffer.startsWith('/') || buffer.includes(' ')) return []
+    return searchSlashCommands(buffer.slice(1)).slice(0, 8)
+  }
+
+  const render = () => {
+    if (drawn) clearRenderedLines(drawn)
+    const rows = slashRows()
+    const lines = [chalk.bold(`› ${buffer}`)]
+    if (rows.length) {
+      if (selected >= rows.length) selected = 0
+      lines.push(chalk.dim('Comandos: ↑/↓ + Enter'))
+      for (let i = 0; i < rows.length; i += 1) {
+        const command = rows[i]
+        if (!command) continue
+        const prefix = i === selected ? chalk.green('›') : ' '
+        lines.push(`${prefix} ${command.usage.padEnd(24)} ${chalk.dim(command.description)}`)
+      }
+    }
+    output.write(`\n${lines.join('\n')}\n`)
+    drawn = lines.length + 1
+  }
+
+  render()
+  try {
+    const text = await new Promise<string>((resolve) => {
+      const onKey = (_str: string, key: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
+        const rows = slashRows()
+        if (key.ctrl && key.name === 'c') {
+          stdin.off('keypress', onKey)
+          resolve('/exit')
+          return
+        }
+        if (key.name === 'escape') {
+          buffer = ''
+          selected = 0
+          render()
+          return
+        }
+        if (key.name === 'up') {
+          if (rows.length) {
+            selected = (selected - 1 + rows.length) % rows.length
+            render()
+          }
+          return
+        }
+        if (key.name === 'down') {
+          if (rows.length) {
+            selected = (selected + 1) % rows.length
+            render()
+          }
+          return
+        }
+        if (key.name === 'backspace') {
+          buffer = buffer.slice(0, -1)
+          selected = 0
+          render()
+          return
+        }
+        if (key.name === 'return') {
+          if (rows.length && buffer.startsWith('/') && !buffer.includes(' ')) {
+            const picked = rows[selected]
+            stdin.off('keypress', onKey)
+            resolve(picked ? commandTemplate(picked) : buffer.trim())
+            return
+          }
+          stdin.off('keypress', onKey)
+          resolve(buffer.trim())
+          return
+        }
+        const ch = key.sequence ?? ''
+        if (ch && ch >= ' ' && ch !== '\u007f' && !key.ctrl && !key.meta) {
+          buffer += ch
+          selected = 0
+          render()
+        }
+      }
+      stdin.on('keypress', onKey)
+    })
+    return text
+  } finally {
+    if (drawn) clearRenderedLines(drawn)
+    if (!wasRaw) stdin.setRawMode(false)
+    output.write('\n')
+  }
 }
 
 async function pickByIndex(rl: PromptReader, title: string, items: string[]) {
@@ -329,19 +528,47 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       renderHeader(state)
       return { handled: true, exit: false, state }
     }
-    case 'sessions':
-      renderNotice('Sessões', formatSessionList(await listSessions()))
+    case 'sessions': {
+      const sessions = await listSessions()
+      if (input.isTTY && sessions.length) {
+        const idx = await pickByArrows('Sessões antigas', sessions.map(formatSessionChoice), 'Nenhuma sessão encontrada')
+        if (idx !== undefined) {
+          const picked = sessions[idx]
+          if (picked) {
+            state.project = await upsertProject(picked.projectPath)
+            state.session = picked
+            state.providerId = picked.provider
+            state.model = picked.model
+            state.agent = picked.agent ?? 'general'
+            state.project = await setProjectSession(state.project, picked.id)
+            renderHeader(state)
+            return { handled: true, exit: false, state }
+          }
+        }
+      }
+      renderNotice('Sessões', formatSessionList(sessions))
       return { handled: true, exit: false, state }
+    }
     case 'continue':
       renderHeader(state)
       return { handled: true, exit: false, state }
     case 'session': {
       const id = parsed.args.trim()
+      const sessions = await listSessions()
       if (!id) {
+        const idx = await pickByArrows('Sessões antigas', sessions.map(formatSessionChoice), 'Nenhuma sessão encontrada')
+        if (idx === undefined) return { handled: true, exit: false, state }
+        const picked = sessions[idx]
+        if (!picked) return { handled: true, exit: false, state }
+        state.project = await upsertProject(picked.projectPath)
+        state.session = picked
+        state.providerId = picked.provider
+        state.model = picked.model
+        state.agent = picked.agent ?? 'general'
+        state.project = await setProjectSession(state.project, picked.id)
         renderHeader(state)
         return { handled: true, exit: false, state }
       }
-      const sessions = await listSessions()
       const session = sessions.find((item) => item.id === id || item.id.startsWith(id))
       if (!session) renderError(`Sessão não encontrada: ${id}`)
       else {
@@ -355,6 +582,7 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       }
       return { handled: true, exit: false, state }
     }
+
     case 'rename': {
       const title = parsed.args.trim()
       if (!title) renderError('Uso: /rename <titulo>')
@@ -416,18 +644,13 @@ export async function runChat(config: OpenDeepConfig) {
     while (true) {
       let text: string
       try {
-        text = (await rl.question(chalk.bold('› '))).trim()
+        text = await readChatInput(rl)
       } catch (error) {
         if (error instanceof Error && /readline was closed/i.test(error.message)) break
         throw error
       }
       if (!text) continue
       if (text.startsWith('/')) {
-        if (text === '/') {
-          const selected = await selectSlashCommand(rl)
-          if (!selected) continue
-          text = selected
-        }
         const result = await handleSlash(text, state, config, rl)
         if (result.exit) break
         continue

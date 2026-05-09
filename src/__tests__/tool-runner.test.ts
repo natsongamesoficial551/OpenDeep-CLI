@@ -49,6 +49,18 @@ test('runTool bash respects dangerous command autoAllow guard', async () => {
   })
 })
 
+test('runTool write missing filePath returns friendly error', async () => {
+  await withTempProject(async (dir) => {
+    await assert.rejects(runTool('write', { content: 'body' }, ctx(dir)), /faltou "filePath"/)
+  })
+})
+
+test('runTool write empty filePath returns friendly error', async () => {
+  await withTempProject(async (dir) => {
+    await assert.rejects(runTool('write', { filePath: '   ', content: 'body' }, ctx(dir)), /filePath" não pode ser vazio/)
+  })
+})
+
 test('background runner starts, reports, and stops jobs', async () => {
   await withTempProject(async (dir) => {
     const start = await runTool('run_background', { command: 'node -e "console.log(\'ready\'); setInterval(() => {}, 1000)"', label: 'test server' }, ctx(dir))

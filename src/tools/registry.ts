@@ -1,3 +1,4 @@
+import { ZodError } from 'zod'
 import { ToolDefinition, ToolContext, ToolResult } from './tool.js'
 import { readTool } from './read.js'
 import { globToolDef } from './glob.js'
@@ -28,10 +29,29 @@ export function getTool(id: string) {
   return BUILTIN_TOOLS.find((tool) => tool.id === id)
 }
 
+function formatInvalidToolArgs(id: string, error: ZodError) {
+  const missing = error.issues.find((issue) => issue.code === 'invalid_type' && issue.path.length && issue.message.toLowerCase().includes('undefined'))
+  if (missing) {
+    const field = String(missing.path.at(-1))
+    if (id === 'write' && field === 'filePath') {
+      return `Tool write inválido: faltou "filePath". Exemplo: {"filePath":"./site/style.css","content":"..."}`
+    }
+    return `Tool ${id} inválido: faltou "${field}".`
+  }
+  const detail = error.issues[0]?.message ?? 'argumentos inválidos'
+  return `Tool ${id} inválido: ${detail}`
+}
+
 export async function runTool(id: string, args: unknown, ctx: ToolContext): Promise<ToolResult> {
   const tool = getTool(id)
   if (!tool) throw new Error(`Unknown tool: ${id}`)
-  const parsed = tool.parameters.parse(args)
+  let parsed: unknown
+  try {
+    parsed = tool.parameters.parse(args)
+  } catch (error) {
+    if (error instanceof ZodError) throw new Error(formatInvalidToolArgs(id, error))
+    throw error
+  }
   publish({ type: 'tool.started', tool: id, title: id })
   const result = await (tool as ToolDefinition).execute(parsed, ctx)
   const truncated = await truncateOutput(result.output, { prefix: id })

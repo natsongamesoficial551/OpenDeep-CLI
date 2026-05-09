@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from 'node:fs/promises'
+import { mkdir, stat, writeFile } from 'node:fs/promises'
 import { dirname, resolve } from 'node:path'
 import { createTwoFilesPatch } from 'diff'
 import { z } from 'zod'
@@ -10,13 +10,24 @@ export const writeTool = defineTool({
   description: 'Write a UTF-8 text file after permission approval.',
   parameters: z.object({ filePath: z.string(), content: z.string() }),
   async execute(args, ctx) {
-    const filePath = resolve(ctx.cwd, args.filePath)
+    const normalizedPath = args.filePath.trim()
+    if (!normalizedPath) throw new Error('Tool write inválido: "filePath" não pode ser vazio.')
+
+    const filePath = resolve(ctx.cwd, normalizedPath)
     assertInsideRoot(ctx.cwd, filePath)
-    const diff = createTwoFilesPatch(args.filePath, args.filePath, '', args.content)
-    const allowed = await ctx.permissions.require('write', `write ${args.filePath}`, { pattern: args.filePath, metadata: { diff } })
+
+    try {
+      const info = await stat(filePath)
+      if (info.isDirectory()) throw new Error('Tool write inválido: "filePath" aponta para um diretório.')
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error
+    }
+
+    const diff = createTwoFilesPatch(normalizedPath, normalizedPath, '', args.content)
+    const allowed = await ctx.permissions.require('write', `write ${normalizedPath}`, { pattern: normalizedPath, metadata: { diff } })
     if (!allowed) throw new Error('Permission denied')
     await mkdir(dirname(filePath), { recursive: true })
     await writeFile(filePath, args.content)
-    return { title: args.filePath, output: `Wrote ${args.filePath}`, metadata: { diff, filePath } }
+    return { title: normalizedPath, output: `Wrote ${normalizedPath}`, metadata: { diff, filePath } }
   },
 })
