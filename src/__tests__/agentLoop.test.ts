@@ -46,7 +46,7 @@ async function makeState(): Promise<{ state: ChatRuntimeState; cleanup: () => Pr
 }
 
 test('toolsForAgent filters registered tools', () => {
-  assert.deepEqual(toolsForAgent('plan').map((tool) => tool.id).sort(), ['glob', 'grep', 'read'])
+  assert.deepEqual(toolsForAgent('plan').map((tool) => tool.id).sort(), ['git_diff', 'git_log', 'git_status', 'glob', 'grep', 'list', 'read'])
   assert.ok(toolsForAgent('general').some((tool) => tool.id === 'bash'))
 })
 

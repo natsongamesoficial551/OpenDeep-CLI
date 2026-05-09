@@ -9,26 +9,36 @@ import { ToolDefinition, ToolContext } from '../tools/tool.js'
 import { safeError } from '../security/redact.js'
 
 const MAX_AGENT_ITERATIONS = 8
+const WRITE_INTENT = /\b(cri(e|ar|a)|criar|crie|ger(e|ar)|gerar|fa(ç|c)a|fazer|write|create|edit|editar|modificar|salvar|arquivo|site|index\.html|style\.css|script\.js)\b/i
 
-export function toolsForAgent(agentName: string): ToolDefinition[] {
-  const agent = getAgent(agentName)
-  if (!agent.tools) return [...BUILTIN_TOOLS]
-  const allowed = new Set(agent.tools)
+function hasWriteIntent(messages: ChatMessage[]) {
+  const lastUser = [...messages].reverse().find((message) => message.role === 'user')
+  return lastUser ? WRITE_INTENT.test(lastUser.content) : false
+}
+
+export function toolsForAgent(agentName: string, messages: ChatMessage[] = []): ToolDefinition[] {
+  const effectiveAgent = hasWriteIntent(messages) ? getAgent('build') : getAgent(agentName)
+  if (!effectiveAgent.tools) return [...BUILTIN_TOOLS]
+  const allowed = new Set(effectiveAgent.tools)
   return BUILTIN_TOOLS.filter((tool) => allowed.has(tool.id))
 }
 
 function systemPrompt(state: ChatRuntimeState) {
   const agent = getAgent(state.agent)
+  const writeIntent = hasWriteIntent(state.session.messages)
   return [
     agent.systemPrompt,
     '',
     'You are OpenDeep, a terminal coding agent.',
     `Current project path: ${state.project.path}`,
-    'Use tools when you need to inspect files, search code, edit files, or run commands.',
+    'Use tools when you need to inspect files, search code, edit files, create directories, or run commands.',
+    'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir and write to create the requested files.',
+    'For requested static sites, create index.html, style.css, and script.js when asked, unless the user asks for a different structure.',
+    writeIntent ? 'The latest user request appears to require writing/creating files, so write-capable tools are available for this turn.' : '',
     'Do not claim that you read, edited, searched, or ran anything unless you actually used a tool and received a tool result.',
-    'Before editing, read the relevant file first. Prefer exact edits over rewriting whole files.',
+    'Before editing existing files, read the relevant file first. For new files, use mkdir for directories and write for file contents.',
     'Respect permission prompts and never try to bypass safety checks.',
-  ].join('\n')
+  ].filter(Boolean).join('\n')
 }
 
 function messagesWithSystem(state: ChatRuntimeState): ChatMessage[] {
@@ -88,7 +98,7 @@ async function fallbackTurn(provider: ProviderAdapter, state: ChatRuntimeState, 
 
 export async function runAgentTurn(input: { state: ChatRuntimeState; config: OpenDeepConfig; provider: ProviderAdapter; signal?: AbortSignal | undefined }) {
   const { state, config, provider, signal } = input
-  const tools = toolsForAgent(state.agent)
+  const tools = toolsForAgent(state.agent, state.session.messages)
   if (!provider.completeWithTools || tools.length === 0) {
     return fallbackTurn(provider, state, config, signal)
   }

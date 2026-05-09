@@ -5,10 +5,14 @@ import { grepToolDef } from './grep.js'
 import { editTool } from './edit.js'
 import { writeTool } from './write.js'
 import { bashToolDef } from './bash.js'
+import { listTool } from './list.js'
+import { mkdirTool } from './mkdir.js'
+import { gitStatusTool, gitDiffTool, gitLogTool } from './git.js'
+import { webFetchTool } from './webFetch.js'
 import { truncateOutput } from '../core/truncation.js'
 import { publish } from '../core/events.js'
 
-export const BUILTIN_TOOLS = [readTool, globToolDef, grepToolDef, editTool, writeTool, bashToolDef] satisfies ToolDefinition[]
+export const BUILTIN_TOOLS = [readTool, listTool, globToolDef, grepToolDef, editTool, writeTool, mkdirTool, bashToolDef, gitStatusTool, gitDiffTool, gitLogTool, webFetchTool] satisfies ToolDefinition[]
 
 export function listTools() {
   return BUILTIN_TOOLS.map((tool) => ({ id: tool.id, description: tool.description }))
