@@ -6,9 +6,10 @@ import { getProviderConfigs } from './providers/registry.js'
 import { redactObject, safeError } from './security/redact.js'
 import { doctor } from './doctor.js'
 import { previewImports } from './importers/importers.js'
-import { formatModelCatalog } from './providers/modelCatalog.js'
+import { formatModelCatalog, parseProviderModel } from './providers/modelCatalog.js'
 import { listSessions, loadSession, formatSessionList } from './sessions/sessionStore.js'
 import { formatProjectList, listProjects, upsertProject } from './projects/projectStore.js'
+import { getSecret } from './security/secrets.js'
 import { configureApiKey } from './auth/auth.js'
 import { formatToolList } from './tools/registry.js'
 import { addPermissionRule, formatPermissionRules, loadPermissionRules, PermissionCategory } from './permissions/rules.js'
@@ -51,10 +52,39 @@ export async function runCli(argv: string[]) {
       console.log(`Default: ${next.defaultProvider}/${next.defaultModel}`)
     })
 
+  const configuredProviderConfigs = async () => {
+    const providers = getProviderConfigs(await loadConfig())
+    const configured = []
+    for (const provider of providers) {
+      if (!provider.apiKeyEnv || await getSecret(provider.apiKeyEnv)) configured.push(provider)
+    }
+    return configured.length ? configured : providers
+  }
+
   program.command('models')
-    .description('List recommended models')
+    .description('List recommended models; defaults to providers already configured with API keys')
     .argument('[provider]')
-    .action(async (provider?: string) => console.log(formatModelCatalog(getProviderConfigs(await loadConfig()), provider)))
+    .option('--all', 'Show all providers')
+    .action(async (provider?: string, options?: { all?: boolean }) => {
+      const providers = options?.all ? getProviderConfigs(await loadConfig()) : await configuredProviderConfigs()
+      console.log(formatModelCatalog(providers, provider))
+    })
+
+  program.command('use')
+    .description('Set default provider/model in one step')
+    .argument('<provider-or-provider/model>')
+    .action(async (target: string) => {
+      const next = await updateConfig((config) => {
+        const providers = getProviderConfigs(config)
+        const directProvider = target.includes('/') ? undefined : providers.find((item) => item.id === target)
+        const parsed = directProvider ? { providerId: directProvider.id, model: directProvider.defaultModel } : parseProviderModel(target, config.defaultProvider)
+        const found = parsed ? providers.find((item) => item.id === parsed.providerId) : undefined
+        if (!parsed || !found) throw new Error(`Unknown provider/model: ${target}`)
+        config.defaultProvider = found.id
+        config.defaultModel = parsed.model || found.defaultModel
+      })
+      console.log(`Default: ${next.defaultProvider}/${next.defaultModel}`)
+    })
 
   const configureProvider = async (providerId: string) => {
     const provider = getProviderConfigs(await loadConfig()).find((item) => item.id === providerId)

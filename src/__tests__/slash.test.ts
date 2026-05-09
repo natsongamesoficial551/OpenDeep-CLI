@@ -1,16 +1,23 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { resolveSlash, SLASH_COMMANDS } from '../commands/slash.js'
+import { resolveSlash, searchSlashCommands, SLASH_COMMANDS } from '../commands/slash.js'
 
 test('resolves slash aliases and bare slash', () => {
   assert.deepEqual(resolveSlash('/'), { command: 'help', args: '' })
   assert.equal(resolveSlash('/?')?.command, 'help')
   assert.equal(resolveSlash('/setup openrouter')?.command, 'login')
   assert.equal(resolveSlash('/model openai/gpt-4o')?.command, 'model')
+  assert.equal(resolveSlash('/use openai/gpt-4o')?.command, 'use')
 })
 
 test('has rich command registry', () => {
-  for (const name of ['provider', 'api', 'model', 'agent', 'project', 'sessions', 'new']) {
+  for (const name of ['provider', 'api', 'model', 'use', 'agent', 'project', 'sessions', 'new']) {
     assert.ok(SLASH_COMMANDS.some((command) => command.name === name), `missing ${name}`)
   }
+})
+
+test('searches slash commands for palette', () => {
+  const matches = searchSlashCommands('prov').map((command) => command.name)
+  assert.ok(matches.includes('provider'))
+  assert.ok(matches.includes('providers'))
 })

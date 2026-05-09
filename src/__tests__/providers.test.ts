@@ -5,7 +5,7 @@ import { getProviderConfigs, resolveModel } from '../providers/registry.js'
 
 test('registers required providers', () => {
   const ids = getProviderConfigs(DEFAULT_CONFIG).map((provider) => provider.id)
-  for (const id of ['openai', 'anthropic', 'gemini', 'openrouter', 'nvidia', 'deepseek', 'groq', 'mistral', 'ollama', 'lmstudio', 'github-models', 'bedrock', 'vertex', 'foundry', 'codex']) {
+  for (const id of ['openai', 'anthropic', 'gemini', 'openrouter', 'nvidia', 'deepseek', 'groq', 'mistral', 'xai', 'perplexity', 'together', 'fireworks', 'ollama', 'lmstudio', 'github-models', 'bedrock', 'vertex', 'foundry', 'codex']) {
     assert.ok(ids.includes(id), `missing ${id}`)
   }
 })

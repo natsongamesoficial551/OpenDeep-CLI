@@ -136,4 +136,5 @@ export interface SlashCommand {
   usage: string
   description: string
   category: 'Core' | 'Provider' | 'Model' | 'Agent' | 'Project' | 'Session' | 'Config' | 'Tools' | 'Permissions'
+  template?: string
 }
