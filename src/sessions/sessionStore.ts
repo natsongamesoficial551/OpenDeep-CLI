@@ -76,11 +76,15 @@ export function appendMessage(session: SessionRecord, message: ChatMessage) {
   if (session.title === 'Nova sessão' && message.role === 'user') session.title = sessionTitleFromPrompt(message.content)
 }
 
+function compact(value: string, max = 48) {
+  return value.length <= max ? value : `${value.slice(0, max - 1)}…`
+}
+
 export function formatSessionList(sessions: SessionRecord[]) {
   if (sessions.length === 0) return 'Nenhuma sessão encontrada.'
   return sessions.map((session) => {
     const date = new Date(session.updatedAt).toLocaleString()
-    return `${session.id.slice(0, 8)}  ${session.title}  ${session.provider}/${session.model}  ${date}`
+    return `${session.id.slice(0, 8)}  ${compact(session.title, 42).padEnd(42)}  ${compact(`${session.provider}/${session.model}`, 34).padEnd(34)}  ${compact(session.projectPath, 36)}  ${date}`
   }).join('\n')
 }
 

@@ -26,6 +26,13 @@ class InfiniteToolProvider extends FakeToolProvider {
   }
 }
 
+class ToolChoiceFailProvider implements ProviderAdapter {
+  config = { id: 'tool-choice-fail', name: 'Tool choice fail', kind: 'openai-compatible' as const, defaultModel: 'fake' }
+  async complete(): Promise<string> { return 'fallback after tool choice failure' }
+  async *stream(): AsyncIterable<string> { yield 'fallback after tool choice failure' }
+  async completeWithTools(): Promise<ChatResponse> { throw new Error('400 "auto" tool choice requires --enable-auto-tool-choice and --tool-call-parser to be set') }
+}
+
 class FallbackProvider implements ProviderAdapter {
   config = { id: 'fallback', name: 'Fallback', kind: 'placeholder' as const, defaultModel: 'fallback' }
   async complete(): Promise<string> { return 'fallback text' }
@@ -70,6 +77,16 @@ test('agent loop falls back for providers without tools', async () => {
     const answer = await runAgentTurn({ state, config: { ...DEFAULT_CONFIG, ui: { ...DEFAULT_CONFIG.ui, stream: false } }, provider: new FallbackProvider() })
     assert.equal(answer, 'fallback text')
     assert.equal(state.session.messages.at(-1)?.content, 'fallback text')
+  } finally {
+    await cleanup()
+  }
+})
+
+test('agent loop falls back when provider rejects auto tool choice', async () => {
+  const { state, cleanup } = await makeState()
+  try {
+    const answer = await runAgentTurn({ state, config: { ...DEFAULT_CONFIG, ui: { ...DEFAULT_CONFIG.ui, stream: false } }, provider: new ToolChoiceFailProvider() })
+    assert.equal(answer, 'fallback after tool choice failure')
   } finally {
     await cleanup()
   }

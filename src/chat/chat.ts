@@ -14,6 +14,7 @@ import { BUILTIN_AGENTS } from '../agents/agents.js'
 import { doctor } from '../doctor.js'
 import { formatPermissionRules, addPermissionRule, loadPermissionRules, PermissionCategory } from '../permissions/rules.js'
 import { getSecret } from '../security/secrets.js'
+import { importCodexLocalAuth } from '../importers/importers.js'
 import { runAgentTurn } from './agentLoop.js'
 
 export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter) {
@@ -124,6 +125,7 @@ async function selectSlashCommand(rl: PromptReader) {
   if (!selected) return undefined
   if (selected.usage.includes('<') || selected.usage.includes('[')) {
     const args = (await rl.question(chalk.bold(`Argumentos para ${selected.usage}: `))).trim()
+    if (args.startsWith('/')) return args
     return `/${selected.name}${args ? ` ${args}` : ''}`
   }
   return commandTemplate(selected)
@@ -146,9 +148,13 @@ async function selectModel(rl: PromptReader, provider: ProviderConfig) {
   return models[idx]
 }
 
+function cleanProviderModel(providerId: string, model: string) {
+  return providerId === 'nvidia' && model.startsWith('nvidia/') ? model.slice('nvidia/'.length) : model
+}
+
 async function applyProviderModel(state: ChatRuntimeState, providerId: string, model: string) {
   state.providerId = providerId
-  state.model = normalizeModel(providerId, model)
+  state.model = normalizeModel(providerId, cleanProviderModel(providerId, model))
   state.session.provider = state.providerId
   state.session.model = state.model
   state.session.messages = []
@@ -182,6 +188,12 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
     case 'providers':
       renderNotice('Provedores', providerList(config))
       return { handled: true, exit: false, state }
+    case 'codex': {
+      const result = await importCodexLocalAuth()
+      renderNotice('Codex', result.message)
+      if (result.imported) await applyProviderModel(state, 'codex-oauth', process.env.CODEX_MODEL ?? 'gpt-5.5')
+      return { handled: true, exit: false, state }
+    }
     case 'provider': {
       const id = parsed.args.trim()
       let provider = id ? providers.find((item) => item.id === id) : undefined
@@ -318,14 +330,22 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       return { handled: true, exit: false, state }
     }
     case 'sessions':
-      renderNotice('Sessões', formatSessionList(await listSessions(state.project.path)))
+      renderNotice('Sessões', formatSessionList(await listSessions()))
+      return { handled: true, exit: false, state }
+    case 'continue':
+      renderHeader(state)
       return { handled: true, exit: false, state }
     case 'session': {
       const id = parsed.args.trim()
-      const sessions = await listSessions(state.project.path)
+      if (!id) {
+        renderHeader(state)
+        return { handled: true, exit: false, state }
+      }
+      const sessions = await listSessions()
       const session = sessions.find((item) => item.id === id || item.id.startsWith(id))
       if (!session) renderError(`Sessão não encontrada: ${id}`)
       else {
+        state.project = await upsertProject(session.projectPath)
         state.session = session
         state.providerId = session.provider
         state.model = session.model
@@ -370,6 +390,23 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
   }
 }
 
+function watchAbortKey(controller: AbortController) {
+  if (!process.stdin.isTTY) return () => {}
+  const stdin = process.stdin
+  const wasRaw = stdin.isRaw
+  const onData = (chunk: Buffer) => {
+    const text = chunk.toString('utf8')
+    if (text.includes('\u001b') || text.includes('\u0003')) controller.abort()
+  }
+  stdin.setRawMode(true)
+  stdin.resume()
+  stdin.on('data', onData)
+  return () => {
+    stdin.off('data', onData)
+    if (!wasRaw) stdin.setRawMode(false)
+  }
+}
+
 export async function runChat(config: OpenDeepConfig) {
   const rl = readline.createInterface({ input, output, historySize: 200 })
   const state = await initialState(config)
@@ -400,14 +437,21 @@ export async function runChat(config: OpenDeepConfig) {
       appendMessage(state.session, { role: 'user', content: text })
       try {
         const provider = createProvider(state.providerId, config)
-        await runAgentTurn({ state, config, provider })
+        const controller = new AbortController()
+        const stopWatchingAbort = watchAbortKey(controller)
+        try {
+          await runAgentTurn({ state, config, provider, signal: controller.signal })
+        } finally {
+          stopWatchingAbort()
+        }
         state.session.provider = state.providerId
         state.session.model = state.model
         state.session.agent = state.agent
         await saveSession(state.session)
         state.project = await setProjectSession(state.project, state.session.id)
       } catch (error) {
-        renderError(safeError(error))
+        if (error instanceof Error && /abort/i.test(error.name + error.message)) renderNotice('Interrompido', 'Resposta interrompida pelo usuário.')
+        else renderError(safeError(error))
       }
     }
   } finally {

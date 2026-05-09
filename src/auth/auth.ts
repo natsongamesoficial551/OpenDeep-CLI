@@ -1,6 +1,7 @@
 import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import { ProviderConfig } from '../types.js'
+import { importCodexLocalAuth } from '../importers/importers.js'
 import { setSecret } from '../security/secrets.js'
 
 async function askHidden(question: string) {
@@ -50,6 +51,10 @@ async function askHidden(question: string) {
 }
 
 export async function configureApiKey(provider: ProviderConfig) {
+  if (provider.id === 'codex-oauth') {
+    const result = await importCodexLocalAuth()
+    return result.message
+  }
   if (!provider.apiKeyEnv) return `${provider.name} não usa API key configurável neste adapter.`
   const key = await askHidden(`Cole a API key para ${provider.name} (${provider.apiKeyEnv}): `)
   if (!key.trim()) return 'Configuração cancelada.'

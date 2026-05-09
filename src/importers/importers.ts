@@ -1,7 +1,9 @@
 import { existsSync } from 'node:fs'
 import { readFile } from 'node:fs/promises'
 import { join } from 'node:path'
+import { homedir } from 'node:os'
 import { ProviderProfile } from '../types.js'
+import { setSecret } from '../security/secrets.js'
 
 export interface ImportPreview {
   sources: string[]
@@ -18,6 +20,7 @@ function withOptional(profile: ProviderProfile, baseUrl?: string, apiKeyEnv?: st
 }
 
 function fromEnv(): ProviderProfile | undefined {
+  if (process.env.CODEX_API_KEY) return { provider: 'codex-oauth', model: process.env.CODEX_MODEL ?? 'gpt-5.5', apiKeyEnv: 'CODEX_OAUTH_TOKEN' }
   if (process.env.OPENAI_API_KEY || process.env.OPENAI_BASE_URL || process.env.OPENAI_MODEL) {
     if (process.env.OPENAI_BASE_URL?.includes('openrouter')) return withOptional({ provider: 'openrouter', model: process.env.OPENAI_MODEL ?? 'openai/gpt-4o-mini' }, process.env.OPENAI_BASE_URL, 'OPENAI_API_KEY')
     if (process.env.OPENAI_BASE_URL?.includes('deepseek')) return withOptional({ provider: 'deepseek', model: process.env.OPENAI_MODEL ?? 'deepseek-chat' }, process.env.OPENAI_BASE_URL, 'OPENAI_API_KEY')
@@ -27,6 +30,53 @@ function fromEnv(): ProviderProfile | undefined {
   if (process.env.ANTHROPIC_API_KEY) return { provider: 'anthropic', model: process.env.ANTHROPIC_MODEL ?? 'claude-3-5-sonnet-latest', apiKeyEnv: 'ANTHROPIC_API_KEY' }
   if (process.env.GEMINI_API_KEY) return { provider: 'gemini', model: process.env.GEMINI_MODEL ?? 'gemini-2.5-flash', apiKeyEnv: 'GEMINI_API_KEY' }
   return undefined
+}
+
+async function readJson(path: string) {
+  if (!existsSync(path)) return undefined
+  try {
+    return JSON.parse(await readFile(path, 'utf8')) as Record<string, unknown>
+  } catch {
+    return undefined
+  }
+}
+
+function tokenFromJson(data: Record<string, unknown> | undefined) {
+  if (!data) return undefined
+  for (const key of ['api_key', 'apiKey', 'access_token', 'accessToken', 'id_token']) {
+    const value = data[key]
+    if (typeof value === 'string' && value.trim()) return value.trim()
+  }
+  const auth = data.auth
+  if (auth && typeof auth === 'object') return tokenFromJson(auth as Record<string, unknown>)
+  const openai = data.openai
+  if (openai && typeof openai === 'object') return tokenFromJson(openai as Record<string, unknown>)
+  return undefined
+}
+
+function codexAuthPaths() {
+  const paths = [join(homedir(), '.codex', 'auth.json'), join(homedir(), '.codex', 'config.json')]
+  if (process.env.CODEX_AUTH_JSON_PATH) paths.unshift(process.env.CODEX_AUTH_JSON_PATH)
+  return paths
+}
+
+export async function importCodexLocalAuth() {
+  const envToken = process.env.CODEX_API_KEY ?? process.env.OPENAI_API_KEY
+  if (envToken?.trim()) {
+    await setSecret('CODEX_OAUTH_TOKEN', envToken.trim())
+    return { imported: true, source: process.env.CODEX_API_KEY ? 'CODEX_API_KEY' : 'OPENAI_API_KEY', message: 'Credencial Codex importada de variável de ambiente.' }
+  }
+
+  for (const path of codexAuthPaths()) {
+    const data = await readJson(path)
+    const token = tokenFromJson(data)
+    if (token) {
+      await setSecret('CODEX_OAUTH_TOKEN', token)
+      return { imported: true, source: path, message: 'Credencial Codex importada do login local.' }
+    }
+    if (data) return { imported: false, source: path, message: 'Login Codex encontrado, mas token API compatível não disponível.' }
+  }
+  return { imported: false, message: 'Nenhum login local do Codex encontrado. Rode o login do Codex CLI/OpenAI primeiro ou configure CODEX_API_KEY/OPENAI_API_KEY.' }
 }
 
 async function fromOpenCodeFile(cwd: string): Promise<ProviderProfile | undefined> {
@@ -49,7 +99,9 @@ export async function previewImports(cwd: string): Promise<ImportPreview> {
   if (envProfile) sources.push('environment')
   const fileProfile = await fromOpenCodeFile(cwd)
   if (fileProfile) sources.push('opencode.json')
-  if (!envProfile && !fileProfile) warnings.push('No compatible provider settings found in environment or current directory.')
-  if (process.env.CODEX_API_KEY || process.env.CODEX_AUTH_JSON_PATH) warnings.push('Codex credentials detected; OAuth migration is planned but not copied by MVP importer.')
-  return { sources, profile: envProfile ?? fileProfile, warnings }
+  const codexAuth = await importCodexLocalAuth()
+  if (codexAuth.imported) sources.push(`codex:${codexAuth.source}`)
+  else if (codexAuth.source) warnings.push(codexAuth.message)
+  if (!envProfile && !fileProfile && !codexAuth.imported) warnings.push('No compatible provider settings found in environment or current directory.')
+  return { sources, profile: envProfile ?? fileProfile ?? (codexAuth.imported ? { provider: 'codex-oauth', model: process.env.CODEX_MODEL ?? 'gpt-5.5', apiKeyEnv: 'CODEX_OAUTH_TOKEN' } : undefined), warnings }
 }

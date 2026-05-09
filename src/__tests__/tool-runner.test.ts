@@ -18,6 +18,7 @@ async function withTempProject(run: (dir: string) => Promise<void>) {
     await run(dir)
   } finally {
     clearJobsForTests()
+    await new Promise((resolve) => setTimeout(resolve, 100))
     await rm(dir, { recursive: true, force: true })
   }
 }

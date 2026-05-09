@@ -108,13 +108,22 @@ export async function runAgentTurn(input: { state: ChatRuntimeState; config: Ope
   let finalAnswer = ''
 
   for (let iteration = 0; iteration < MAX_AGENT_ITERATIONS; iteration += 1) {
-    const response = await provider.completeWithTools({
-      messages: messagesWithSystem(state),
-      model: state.model,
-      tools: toolSpecs,
-      toolChoice: 'auto',
-      ...(signal ? { signal } : {}),
-    })
+    let response
+    try {
+      response = await provider.completeWithTools({
+        messages: messagesWithSystem(state),
+        model: state.model,
+        tools: toolSpecs,
+        toolChoice: 'auto',
+        ...(signal ? { signal } : {}),
+      })
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error)
+      if (/tool_choice|auto tool choice|tool-call-parser|enable-auto-tool-choice/i.test(message)) {
+        return fallbackTurn(provider, state, config, signal)
+      }
+      throw error
+    }
 
     const assistantMessage: ChatMessage = {
       role: 'assistant',

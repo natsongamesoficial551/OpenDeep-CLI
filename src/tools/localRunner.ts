@@ -91,7 +91,10 @@ export const jobStopTool = defineTool({
 
 export function clearJobsForTests() {
   for (const job of jobs.values()) {
-    if (job.exitCode === undefined) job.child.kill('SIGKILL')
+    if (job.exitCode === undefined) {
+      job.child.kill('SIGKILL')
+      job.child.unref()
+    }
   }
   jobs.clear()
   nextJobId = 1

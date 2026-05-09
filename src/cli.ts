@@ -5,7 +5,7 @@ import { runChat, runPrompt } from './chat/chat.js'
 import { getProviderConfigs } from './providers/registry.js'
 import { redactObject, safeError } from './security/redact.js'
 import { doctor } from './doctor.js'
-import { previewImports } from './importers/importers.js'
+import { previewImports, importCodexLocalAuth } from './importers/importers.js'
 import { formatModelCatalog, parseProviderModel } from './providers/modelCatalog.js'
 import { listSessions, loadSession, formatSessionList } from './sessions/sessionStore.js'
 import { formatProjectList, listProjects, upsertProject } from './projects/projectStore.js'
@@ -91,6 +91,20 @@ export async function runCli(argv: string[]) {
     if (!provider) throw new Error(`Unknown provider: ${providerId}`)
     console.log(await configureApiKey(provider))
   }
+
+  program.command('codex')
+    .description('Import local Codex/OpenAI login and set Codex as default provider')
+    .action(async () => {
+      const result = await importCodexLocalAuth()
+      console.log(result.message)
+      if (result.imported) {
+        const next = await updateConfig((config) => {
+          config.defaultProvider = 'codex-oauth'
+          config.defaultModel = process.env.CODEX_MODEL ?? 'gpt-5.5'
+        })
+        console.log(`Default: ${next.defaultProvider}/${next.defaultModel}`)
+      }
+    })
 
   program.command('auth')
     .alias('login')

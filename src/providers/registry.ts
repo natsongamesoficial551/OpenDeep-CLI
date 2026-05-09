@@ -23,7 +23,7 @@ export const BUILTIN_PROVIDERS: ProviderConfig[] = [
   { id: 'vertex', name: 'Google Vertex AI', kind: 'placeholder', modelEnv: 'VERTEX_MODEL', defaultModel: 'gemini-2.5-flash', notes: 'Registered for config compatibility; SDK adapter planned.' },
   { id: 'foundry', name: 'Anthropic Foundry', kind: 'placeholder', modelEnv: 'FOUNDRY_MODEL', defaultModel: 'claude-sonnet-4-5', notes: 'Registered for config compatibility; SDK adapter planned.' },
   { id: 'codex', name: 'OpenAI Codex', kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'CODEX_API_KEY', modelEnv: 'CODEX_MODEL', defaultModel: 'gpt-5.5' },
-  { id: 'codex-oauth', name: 'Codex OAuth', kind: 'placeholder', modelEnv: 'CODEX_MODEL', defaultModel: 'gpt-5.5', notes: 'Can import existing Codex auth metadata; browser OAuth flow planned.' },
+  { id: 'codex-oauth', name: 'Codex Local Login', kind: 'openai-compatible', baseUrl: 'https://api.openai.com/v1', apiKeyEnv: 'CODEX_OAUTH_TOKEN', modelEnv: 'CODEX_MODEL', defaultModel: 'gpt-5.5', notes: 'Uses an imported local Codex/OpenAI credential when available.' },
 ]
 
 export function mergeProviderConfig(base: ProviderConfig, config: OpenDeepConfig): ProviderConfig {
