@@ -1,10 +1,10 @@
 import readline from 'node:readline/promises'
 import { stdin as input, stdout as output } from 'node:process'
 import chalk from 'chalk'
-import { ChatRuntimeState, OpenDeepConfig } from '../types.js'
+import { ChatRuntimeState, OpenDeepConfig, ProviderAdapter } from '../types.js'
 import { createProvider, getProviderConfigs, resolveModel } from '../providers/registry.js'
 import { safeError, redactObject } from '../security/redact.js'
-import { renderAssistantBubble, renderAssistantEnd, renderAssistantStart, renderCommandList, renderError, renderHeader, renderNotice, renderUserBubble } from '../ui/chatRenderer.js'
+import { renderCommandList, renderError, renderHeader, renderNotice, renderUserBubble } from '../ui/chatRenderer.js'
 import { resolveSlash, SLASH_COMMANDS } from '../commands/slash.js'
 import { formatModelCatalog, normalizeModel, parseProviderModel } from '../providers/modelCatalog.js'
 import { configureApiKey } from '../auth/auth.js'
@@ -13,24 +13,34 @@ import { formatProjectList, listProjects, setProjectSession, upsertProject } fro
 import { BUILTIN_AGENTS } from '../agents/agents.js'
 import { doctor } from '../doctor.js'
 import { formatPermissionRules, addPermissionRule, loadPermissionRules, PermissionCategory } from '../permissions/rules.js'
-import { formatToolList } from '../tools/registry.js'
+import { runAgentTurn } from './agentLoop.js'
+
+export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter) {
+  const providerConfig = getProviderConfigs(config).find((item) => item.id === provider.config.id) ?? provider.config
+  const project = await upsertProject(process.cwd())
+  const model = config.defaultModel ? normalizeModel(providerConfig.id, config.defaultModel) : normalizeModel(providerConfig.id, resolveModel(providerConfig) || providerConfig.defaultModel)
+  const session = await createSession(project, providerConfig.id, model, 'general')
+  const state: ChatRuntimeState = {
+    providerId: providerConfig.id,
+    model,
+    agent: 'general',
+    project: await setProjectSession(project, session.id),
+    session,
+  }
+
+  renderUserBubble(prompt)
+  appendMessage(state.session, { role: 'user', content: prompt })
+  await runAgentTurn({ state, config, provider })
+  state.session.provider = state.providerId
+  state.session.model = state.model
+  state.session.agent = state.agent
+  await saveSession(state.session)
+}
 
 export async function runPrompt(prompt: string, config: OpenDeepConfig) {
   const providerConfig = getProviderConfigs(config).find((provider) => provider.id === config.defaultProvider)
   if (!providerConfig) throw new Error(`Default provider not found: ${config.defaultProvider}`)
-  const provider = createProvider(providerConfig.id, config)
-  const model = config.defaultModel ? normalizeModel(providerConfig.id, config.defaultModel) : normalizeModel(providerConfig.id, resolveModel(providerConfig) || providerConfig.defaultModel)
-  const messages = [{ role: 'user' as const, content: prompt }]
-
-  renderUserBubble(prompt)
-  if (!config.ui.stream) {
-    renderAssistantBubble(await provider.complete({ messages, model }))
-    return
-  }
-
-  renderAssistantStart()
-  for await (const chunk of provider.stream({ messages, model })) process.stdout.write(chunk)
-  renderAssistantEnd()
+  await runPromptWithProvider(prompt, config, createProvider(providerConfig.id, config))
 }
 
 function providerList(config: OpenDeepConfig) {
@@ -205,7 +215,7 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       renderNotice('Config', JSON.stringify(redactObject(config), null, 2))
       return { handled: true, exit: false, state }
     case 'tools':
-      renderNotice('Tools', formatToolList())
+      renderNotice('Tools', 'Tools are available to the active agent. Use natural language and the model will call tools when needed.')
       return { handled: true, exit: false, state }
     case 'permissions':
       renderNotice('Permissões', formatPermissionRules(await loadPermissionRules(state.project.id)))
@@ -251,24 +261,7 @@ export async function runChat(config: OpenDeepConfig) {
       appendMessage(state.session, { role: 'user', content: text })
       try {
         const provider = createProvider(state.providerId, config)
-        let answer = ''
-        if (config.ui.stream) {
-          renderAssistantStart()
-          try {
-            for await (const chunk of provider.stream({ messages: state.session.messages, model: state.model })) {
-              answer += chunk
-              process.stdout.write(chunk)
-            }
-          } catch (error) {
-            if (answer) renderAssistantEnd()
-            throw error
-          }
-          renderAssistantEnd()
-        } else {
-          answer = await provider.complete({ messages: state.session.messages, model: state.model })
-          renderAssistantBubble(answer)
-        }
-        appendMessage(state.session, { role: 'assistant', content: answer })
+        await runAgentTurn({ state, config, provider })
         state.session.provider = state.providerId
         state.session.model = state.model
         state.session.agent = state.agent

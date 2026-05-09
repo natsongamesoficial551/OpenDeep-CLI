@@ -1,9 +1,31 @@
 export type Role = 'system' | 'user' | 'assistant' | 'tool'
 
+export interface ToolSpec {
+  name: string
+  description: string
+  inputSchema: Record<string, unknown>
+}
+
+export interface ToolCall {
+  id: string
+  name: string
+  arguments: unknown
+  rawArguments?: string | undefined
+  parseError?: string | undefined
+}
+
+export interface ChatResponse {
+  content: string
+  toolCalls?: ToolCall[] | undefined
+}
+
 export interface ChatMessage {
   role: Role
   content: string
-  name?: string
+  name?: string | undefined
+  toolCallId?: string | undefined
+  toolCalls?: ToolCall[] | undefined
+  metadata?: Record<string, unknown> | undefined
 }
 
 export interface ChatRequest {
@@ -12,6 +34,8 @@ export interface ChatRequest {
   temperature?: number
   maxTokens?: number
   signal?: AbortSignal
+  tools?: ToolSpec[] | undefined
+  toolChoice?: 'auto' | 'none' | undefined
 }
 
 export interface ProviderModel {
@@ -38,6 +62,7 @@ export interface ProviderAdapter {
   config: ProviderConfig
   complete(request: ChatRequest): Promise<string>
   stream(request: ChatRequest): AsyncIterable<string>
+  completeWithTools?(request: ChatRequest): Promise<ChatResponse>
   listModels?(): Promise<ProviderModel[]>
 }
 

@@ -1,5 +1,7 @@
 import chalk from 'chalk'
-import { ChatRuntimeState, SlashCommand } from '../types.js'
+import { ChatRuntimeState, SlashCommand, ToolCall } from '../types.js'
+import { ToolResult } from '../tools/tool.js'
+import { redactObject, safeError } from '../security/redact.js'
 import { box, table, terminalWidth } from './terminal.js'
 
 export function renderHeader(state: ChatRuntimeState) {
@@ -30,6 +32,7 @@ export function renderAssistantEnd() {
 }
 
 export function renderAssistantBubble(text: string) {
+  if (!text.trim()) return
   console.log('\n' + box('OpenDeep', text, { color: chalk.blue }))
 }
 
@@ -39,6 +42,20 @@ export function renderNotice(title: string, text: string) {
 
 export function renderError(text: string) {
   console.log('\n' + box('Erro', text, { color: chalk.red }))
+}
+
+export function renderToolCall(call: ToolCall) {
+  const body = JSON.stringify(redactObject({ name: call.name, arguments: call.arguments, parseError: call.parseError }), null, 2)
+  console.log('\n' + box(`Tool ${call.name}`, body, { color: chalk.magenta }))
+}
+
+export function renderToolResult(toolName: string, result: ToolResult) {
+  const body = [result.title, '', result.output].join('\n')
+  console.log('\n' + box(`Tool result ${toolName}`, body, { color: chalk.gray }))
+}
+
+export function renderToolError(toolName: string, error: unknown) {
+  console.log('\n' + box(`Tool error ${toolName}`, safeError(error), { color: chalk.red }))
 }
 
 export function renderCommandList(commands: SlashCommand[]) {
