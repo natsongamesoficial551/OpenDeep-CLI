@@ -7,7 +7,12 @@ export interface AgentDefinition {
 
 export const BUILTIN_AGENTS: AgentDefinition[] = [
   { name: 'plan', description: 'Read-only planning and code exploration agent', systemPrompt: 'Plan carefully. Do not modify files unless explicitly instructed.', tools: ['read', 'list', 'glob', 'grep', 'git_status', 'git_diff', 'git_log'] },
-  { name: 'build', description: 'Coding agent with local tools gated by permissions', systemPrompt: 'Implement requested software changes safely. Read files before editing, create directories with mkdir when needed, prefer exact edits, and respect permission prompts.', tools: ['read', 'list', 'mkdir', 'write', 'edit', 'grep', 'glob', 'bash', 'git_status', 'git_diff', 'git_log', 'web_fetch'] },
+  {
+    name: 'build',
+    description: 'Coding agent with local tools gated by permissions',
+    systemPrompt: 'Implement requested software changes safely. Read files before editing, create directories with mkdir when needed, prefer exact edits, and respect permission prompts. When validating local web apps, run build/test/lint first when available, start dev servers with run_background, inspect logs with job_status, use browser_check to collect console/network/page errors, and stop jobs with job_stop when finished.',
+    tools: ['read', 'list', 'mkdir', 'write', 'edit', 'grep', 'glob', 'bash', 'run_background', 'job_status', 'job_stop', 'git_status', 'git_diff', 'git_log', 'web_fetch', 'browser_check'],
+  },
   { name: 'general', description: 'General purpose research and multi-step assistant', systemPrompt: 'Help with broad research and implementation tasks. Use tools when you need to inspect or change local project state.' },
 ]
 

@@ -9,17 +9,19 @@ import { listTool } from './list.js'
 import { mkdirTool } from './mkdir.js'
 import { gitStatusTool, gitDiffTool, gitLogTool } from './git.js'
 import { webFetchTool } from './webFetch.js'
+import { runBackgroundTool, jobStatusTool, jobStopTool } from './localRunner.js'
+import { browserCheckTool } from './browser.js'
 import { truncateOutput } from '../core/truncation.js'
 import { publish } from '../core/events.js'
 
-export const BUILTIN_TOOLS = [readTool, listTool, globToolDef, grepToolDef, editTool, writeTool, mkdirTool, bashToolDef, gitStatusTool, gitDiffTool, gitLogTool, webFetchTool] satisfies ToolDefinition[]
+export const BUILTIN_TOOLS = [readTool, listTool, globToolDef, grepToolDef, editTool, writeTool, mkdirTool, bashToolDef, runBackgroundTool, jobStatusTool, jobStopTool, gitStatusTool, gitDiffTool, gitLogTool, webFetchTool, browserCheckTool] satisfies ToolDefinition[]
 
 export function listTools() {
   return BUILTIN_TOOLS.map((tool) => ({ id: tool.id, description: tool.description }))
 }
 
 export function formatToolList() {
-  return listTools().map((tool) => `${tool.id.padEnd(10)} ${tool.description}`).join('\n')
+  return listTools().map((tool) => `${tool.id.padEnd(14)} ${tool.description}`).join('\n')
 }
 
 export function getTool(id: string) {

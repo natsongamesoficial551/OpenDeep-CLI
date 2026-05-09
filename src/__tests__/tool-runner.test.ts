@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { DEFAULT_CONFIG } from '../config/config.js'
 import { PermissionManager } from '../permissions/permissions.js'
 import { runTool } from '../tools/registry.js'
+import { clearJobsForTests } from '../tools/localRunner.js'
 
 function ctx(cwd: string, permissions = new PermissionManager({ ...DEFAULT_CONFIG, permissions: { ...DEFAULT_CONFIG.permissions, autoAllow: true } }, `tool-runner-${Date.now()}`)) {
   return { cwd, sessionId: 'test', agent: 'test', permissions, metadata: async () => {} }
@@ -16,6 +17,7 @@ async function withTempProject(run: (dir: string) => Promise<void>) {
   try {
     await run(dir)
   } finally {
+    clearJobsForTests()
     await rm(dir, { recursive: true, force: true })
   }
 }
@@ -43,5 +45,17 @@ test('runTool bash respects dangerous command autoAllow guard', async () => {
     const permissions = new PermissionManager({ ...DEFAULT_CONFIG, permissions: { ...DEFAULT_CONFIG.permissions, autoAllow: true } }, `danger-${Date.now()}`)
     assert.equal(permissions.canAutoAllow('shell', 'rm -rf /', { command: 'rm -rf /' }), false)
     assert.equal(await runTool('bash', { command: 'node --version', timeoutMs: 30_000 }, ctx(dir, permissions)).then(() => true), true)
+  })
+})
+
+test('background runner starts, reports, and stops jobs', async () => {
+  await withTempProject(async (dir) => {
+    const start = await runTool('run_background', { command: 'node -e "console.log(\'ready\'); setInterval(() => {}, 1000)"', label: 'test server' }, ctx(dir))
+    assert.match(start.output, /jobId: job-1/)
+    const status = await runTool('job_status', { jobId: 'job-1' }, ctx(dir))
+    assert.match(status.output, /status: running/)
+    assert.match(status.output, /ready|no logs yet/)
+    const stop = await runTool('job_stop', { jobId: 'job-1' }, ctx(dir))
+    assert.match(stop.output, /Stop signal sent/)
   })
 })
