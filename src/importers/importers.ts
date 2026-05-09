@@ -60,6 +60,8 @@ function codexAuthPaths() {
   return paths
 }
 
+const CHATGPT_SUBSCRIPTION_GUIDANCE = 'Sua assinatura do ChatGPT não libera API automaticamente. Para usar no OpenDeep, configure OPENAI_API_KEY (ou CODEX_API_KEY) no ambiente.'
+
 export async function importCodexLocalAuth() {
   const envToken = process.env.CODEX_API_KEY ?? process.env.OPENAI_API_KEY
   if (envToken?.trim()) {
@@ -74,9 +76,18 @@ export async function importCodexLocalAuth() {
       await setSecret('CODEX_OAUTH_TOKEN', token)
       return { imported: true, source: path, message: 'Credencial Codex importada do login local.' }
     }
-    if (data) return { imported: false, source: path, message: 'Login Codex encontrado, mas token API compatível não disponível.' }
+    if (data) {
+      return {
+        imported: false,
+        source: path,
+        message: `Login Codex encontrado, mas token API compatível não disponível. ${CHATGPT_SUBSCRIPTION_GUIDANCE}`,
+      }
+    }
   }
-  return { imported: false, message: 'Nenhum login local do Codex encontrado. Rode o login do Codex CLI/OpenAI primeiro ou configure CODEX_API_KEY/OPENAI_API_KEY.' }
+  return {
+    imported: false,
+    message: `Nenhum login local do Codex encontrado. Rode o login do Codex CLI/OpenAI primeiro ou configure CODEX_API_KEY/OPENAI_API_KEY. ${CHATGPT_SUBSCRIPTION_GUIDANCE}`,
+  }
 }
 
 async function fromOpenCodeFile(cwd: string): Promise<ProviderProfile | undefined> {
