@@ -54,14 +54,22 @@ export async function runCli(argv: string[]) {
     .argument('[provider]')
     .action(async (provider?: string) => console.log(formatModelCatalog(getProviderConfigs(await loadConfig()), provider)))
 
+  const configureProvider = async (providerId: string) => {
+    const provider = getProviderConfigs(await loadConfig()).find((item) => item.id === providerId)
+    if (!provider) throw new Error(`Unknown provider: ${providerId}`)
+    console.log(await configureApiKey(provider))
+  }
+
   program.command('auth')
+    .alias('login')
     .description('Configure provider API key securely')
     .argument('<provider>')
-    .action(async (providerId: string) => {
-      const provider = getProviderConfigs(await loadConfig()).find((item) => item.id === providerId)
-      if (!provider) throw new Error(`Unknown provider: ${providerId}`)
-      console.log(await configureApiKey(provider))
-    })
+    .action(configureProvider)
+
+  program.command('setup')
+    .description('Alias for auth: configure provider API key securely')
+    .argument('<provider>')
+    .action(configureProvider)
 
   program.command('sessions')
     .description('List recent sessions')

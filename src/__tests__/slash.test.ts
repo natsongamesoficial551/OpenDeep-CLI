@@ -5,6 +5,7 @@ import { resolveSlash, SLASH_COMMANDS } from '../commands/slash.js'
 test('resolves slash aliases and bare slash', () => {
   assert.deepEqual(resolveSlash('/'), { command: 'help', args: '' })
   assert.equal(resolveSlash('/?')?.command, 'help')
+  assert.equal(resolveSlash('/setup openrouter')?.command, 'login')
   assert.equal(resolveSlash('/model openai/gpt-4o')?.command, 'model')
 })
 

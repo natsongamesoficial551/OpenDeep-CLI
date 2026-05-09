@@ -103,7 +103,8 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       }
       return { handled: true, exit: false, state }
     }
-    case 'api': {
+    case 'api':
+    case 'login': {
       const id = parsed.args.trim() || state.providerId
       const provider = providers.find((item) => item.id === id)
       if (!provider) renderError(`Provider não encontrado: ${id}`)

@@ -7,6 +7,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'doctor', usage: '/doctor', description: 'Roda diagnóstico de ambiente/configuração.', category: 'Core' },
   { name: 'provider', usage: '/provider [id]', description: 'Mostra ou troca o provedor atual.', category: 'Provider' },
   { name: 'providers', usage: '/providers', description: 'Lista provedores disponíveis.', category: 'Provider' },
+  { name: 'login', aliases: ['setup'], usage: '/login <provider>', description: 'Alias de /api para logar/configurar provider.', category: 'Provider' },
   { name: 'api', usage: '/api <provider>', description: 'Configura API key com armazenamento seguro.', category: 'Provider' },
   { name: 'model', usage: '/model [provider/model]', description: 'Mostra ou troca modelo.', category: 'Model' },
   { name: 'models', usage: '/models [provider]', description: 'Lista modelos recomendados.', category: 'Model' },

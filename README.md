@@ -41,13 +41,45 @@ opendeep projects
 opendeep doctor
 ```
 
+## Provider login examples
+
+OpenDeep stores API keys through the OS keychain when available, with encrypted local fallback.
+
+OpenRouter:
+
+```bash
+opendeep login openrouter
+opendeep provider openrouter openai/gpt-4o-mini
+opendeep
+```
+
+NVIDIA NIM:
+
+```bash
+opendeep login nvidia
+opendeep provider nvidia nvidia/llama-3.1-nemotron-70b-instruct
+opendeep
+```
+
+Inside chat you can do the same with:
+
+```text
+/login openrouter
+/provider openrouter
+/model openrouter/openai/gpt-4o-mini
+
+/login nvidia
+/provider nvidia
+/model nvidia/nvidia/llama-3.1-nemotron-70b-instruct
+```
+
 Inside the chat, type `/` to open the command help.
 
 Core slash commands:
 
 - `/help` or `/` — show all commands.
 - `/provider [id]` — show or switch provider.
-- `/api <provider>` — securely configure API key.
+- `/login <provider>` or `/api <provider>` — securely configure API key.
 - `/model [provider/model]` — show or switch model.
 - `/models [provider]` — list recommended models.
 - `/agent [name]` and `/agents` — manage agent profile.
@@ -57,7 +89,7 @@ Core slash commands:
 
 ## Current MVP
 
-- Multi-provider registry: OpenAI, Anthropic, Gemini, OpenRouter, DeepSeek, Groq, Mistral, Ollama, LM Studio, GitHub Models, Bedrock, Vertex, Foundry, Codex placeholders.
+- Multi-provider registry: OpenAI, Anthropic, Gemini, OpenRouter, NVIDIA NIM, DeepSeek, Groq, Mistral, Ollama, LM Studio, GitHub Models, Bedrock, Vertex, Foundry, Codex placeholders.
 - Visual terminal chat with header, message boxes, notices, and rich slash-command help.
 - Session persistence and recent project tracking.
 - Secure API key setup through keychain when available, encrypted fallback otherwise.
