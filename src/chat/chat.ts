@@ -6,19 +6,20 @@ import { createProvider, getProviderConfigs, resolveModel } from '../providers/r
 import { safeError, redactObject } from '../security/redact.js'
 import { renderAssistantBubble, renderAssistantEnd, renderAssistantStart, renderCommandList, renderError, renderHeader, renderNotice, renderUserBubble } from '../ui/chatRenderer.js'
 import { resolveSlash, SLASH_COMMANDS } from '../commands/slash.js'
-import { formatModelCatalog, parseProviderModel } from '../providers/modelCatalog.js'
+import { formatModelCatalog, normalizeModel, parseProviderModel } from '../providers/modelCatalog.js'
 import { configureApiKey } from '../auth/auth.js'
 import { appendMessage, createSession, formatSessionList, listSessions, loadSession, saveSession } from '../sessions/sessionStore.js'
 import { formatProjectList, listProjects, setProjectSession, upsertProject } from '../projects/projectStore.js'
 import { BUILTIN_AGENTS } from '../agents/agents.js'
 import { doctor } from '../doctor.js'
-import { table } from '../ui/terminal.js'
+import { formatPermissionRules, addPermissionRule, loadPermissionRules, PermissionCategory } from '../permissions/rules.js'
+import { formatToolList } from '../tools/registry.js'
 
 export async function runPrompt(prompt: string, config: OpenDeepConfig) {
   const providerConfig = getProviderConfigs(config).find((provider) => provider.id === config.defaultProvider)
   if (!providerConfig) throw new Error(`Default provider not found: ${config.defaultProvider}`)
   const provider = createProvider(providerConfig.id, config)
-  const model = config.defaultModel || resolveModel(providerConfig) || providerConfig.defaultModel
+  const model = config.defaultModel ? normalizeModel(providerConfig.id, config.defaultModel) : normalizeModel(providerConfig.id, resolveModel(providerConfig) || providerConfig.defaultModel)
   const messages = [{ role: 'user' as const, content: prompt }]
 
   renderUserBubble(prompt)
@@ -47,7 +48,9 @@ async function initialState(config: OpenDeepConfig): Promise<ChatRuntimeState> {
   const project = await upsertProject(process.cwd())
   const providerId = config.defaultProvider
   const providerConfig = getProviderConfigs(config).find((provider) => provider.id === providerId)
-  const model = config.defaultModel || (providerConfig ? resolveModel(providerConfig) || providerConfig.defaultModel : '')
+  const model = providerConfig
+    ? (config.defaultModel ? normalizeModel(providerConfig.id, config.defaultModel) : normalizeModel(providerConfig.id, resolveModel(providerConfig) || providerConfig.defaultModel))
+    : ''
   const existing = project.lastSessionId ? await loadSession(project.lastSessionId) : undefined
   const session = existing ?? await createSession(project, providerId, model)
   return {
@@ -95,11 +98,12 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       if (!provider) renderError(`Provider não encontrado: ${id}`)
       else {
         state.providerId = provider.id
-        state.model = resolveModel(provider) || provider.defaultModel
+        state.model = normalizeModel(provider.id, resolveModel(provider) || provider.defaultModel)
         state.session.provider = state.providerId
         state.session.model = state.model
+        state.session.messages = []
         await saveSession(state.session)
-        renderNotice('Provider alterado', `${state.providerId}/${state.model}`)
+        renderNotice('Provider alterado', `${state.providerId}/${state.model}\nContexto limpo para evitar misturar providers.`)
       }
       return { handled: true, exit: false, state }
     }
@@ -130,8 +134,9 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
         state.model = next.model
         state.session.provider = state.providerId
         state.session.model = state.model
+        state.session.messages = []
         await saveSession(state.session)
-        renderNotice('Modelo alterado', `${state.providerId}/${state.model}`)
+        renderNotice('Modelo alterado', `${state.providerId}/${state.model}\nContexto limpo para evitar misturar modelos.`)
       }
       return { handled: true, exit: false, state }
     }
@@ -158,7 +163,7 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       if (args.startsWith('add ')) {
         const project = await upsertProject(args.slice(4).trim())
         renderNotice('Projeto registrado', `${project.name}\n${project.path}`)
-      } else renderNotice('Projeto atual', table([['id', state.project.id], ['nome', state.project.name], ['path', state.project.path]]))
+      } else renderNotice('Projeto atual', `id     ${state.project.id}\nnome   ${state.project.name}\npath   ${state.project.path}`)
       return { handled: true, exit: false, state }
     }
     case 'new': {
@@ -199,6 +204,23 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
     case 'config':
       renderNotice('Config', JSON.stringify(redactObject(config), null, 2))
       return { handled: true, exit: false, state }
+    case 'tools':
+      renderNotice('Tools', formatToolList())
+      return { handled: true, exit: false, state }
+    case 'permissions':
+      renderNotice('Permissões', formatPermissionRules(await loadPermissionRules(state.project.id)))
+      return { handled: true, exit: false, state }
+    case 'allow':
+    case 'deny': {
+      const [permission, ...patternParts] = parsed.args.trim().split(/\s+/)
+      const pattern = patternParts.join(' ')
+      if (!permission || !pattern) renderError(`Uso: /${parsed.command} <permission> <pattern>`)
+      else {
+        await addPermissionRule(state.project.id, { permission: permission as PermissionCategory, pattern, action: parsed.command })
+        renderNotice('Permissões', `Regra adicionada: ${parsed.command} ${permission} ${pattern}`)
+      }
+      return { handled: true, exit: false, state }
+    }
     default:
       return { handled: true, exit: false, state }
   }
@@ -229,13 +251,23 @@ export async function runChat(config: OpenDeepConfig) {
       appendMessage(state.session, { role: 'user', content: text })
       try {
         const provider = createProvider(state.providerId, config)
-        renderAssistantStart()
         let answer = ''
-        for await (const chunk of provider.stream({ messages: state.session.messages, model: state.model })) {
-          answer += chunk
-          process.stdout.write(chunk)
+        if (config.ui.stream) {
+          renderAssistantStart()
+          try {
+            for await (const chunk of provider.stream({ messages: state.session.messages, model: state.model })) {
+              answer += chunk
+              process.stdout.write(chunk)
+            }
+          } catch (error) {
+            if (answer) renderAssistantEnd()
+            throw error
+          }
+          renderAssistantEnd()
+        } else {
+          answer = await provider.complete({ messages: state.session.messages, model: state.model })
+          renderAssistantBubble(answer)
         }
-        renderAssistantEnd()
         appendMessage(state.session, { role: 'assistant', content: answer })
         state.session.provider = state.providerId
         state.session.model = state.model

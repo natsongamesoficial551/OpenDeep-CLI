@@ -10,6 +10,8 @@ import { formatModelCatalog } from './providers/modelCatalog.js'
 import { listSessions, loadSession, formatSessionList } from './sessions/sessionStore.js'
 import { formatProjectList, listProjects, upsertProject } from './projects/projectStore.js'
 import { configureApiKey } from './auth/auth.js'
+import { formatToolList } from './tools/registry.js'
+import { addPermissionRule, formatPermissionRules, loadPermissionRules, PermissionCategory } from './permissions/rules.js'
 
 export async function runCli(argv: string[]) {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -92,6 +94,37 @@ export async function runCli(argv: string[]) {
     .description('Register current or provided project path')
     .argument('[path]')
     .action(async (path?: string) => console.log(JSON.stringify(await upsertProject(path ?? process.cwd()), null, 2)))
+
+  program.command('tools')
+    .description('List local tools available to agents')
+    .action(() => console.log(formatToolList()))
+
+  program.command('permissions')
+    .description('List permission rules for current project')
+    .action(async () => {
+      const project = await upsertProject(process.cwd())
+      console.log(formatPermissionRules(await loadPermissionRules(project.id)))
+    })
+
+  program.command('allow')
+    .description('Allow a permission pattern for current project')
+    .argument('<permission>')
+    .argument('<pattern...>')
+    .action(async (permission: string, pattern: string[]) => {
+      const project = await upsertProject(process.cwd())
+      await addPermissionRule(project.id, { permission: permission as PermissionCategory, pattern: pattern.join(' '), action: 'allow' })
+      console.log(`allow ${permission} ${pattern.join(' ')}`)
+    })
+
+  program.command('deny')
+    .description('Deny a permission pattern for current project')
+    .argument('<permission>')
+    .argument('<pattern...>')
+    .action(async (permission: string, pattern: string[]) => {
+      const project = await upsertProject(process.cwd())
+      await addPermissionRule(project.id, { permission: permission as PermissionCategory, pattern: pattern.join(' '), action: 'deny' })
+      console.log(`deny ${permission} ${pattern.join(' ')}`)
+    })
 
   program.command('config')
     .description('Show safe config')

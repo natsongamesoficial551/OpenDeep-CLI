@@ -20,6 +20,10 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'session', usage: '/session <id>', description: 'Carrega sessão pelo prefixo/id.', category: 'Session' },
   { name: 'rename', usage: '/rename <title>', description: 'Renomeia a sessão atual.', category: 'Session' },
   { name: 'config', usage: '/config', description: 'Mostra configuração com secrets redigidos.', category: 'Config' },
+  { name: 'tools', usage: '/tools', description: 'Lista ferramentas locais disponíveis.', category: 'Tools' },
+  { name: 'permissions', usage: '/permissions', description: 'Lista regras de permissão do projeto.', category: 'Permissions' },
+  { name: 'allow', usage: '/allow <permission> <pattern>', description: 'Adiciona regra allow para o projeto.', category: 'Permissions' },
+  { name: 'deny', usage: '/deny <permission> <pattern>', description: 'Adiciona regra deny para o projeto.', category: 'Permissions' },
 ]
 
 export function resolveSlash(input: string) {

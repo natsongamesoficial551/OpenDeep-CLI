@@ -41,8 +41,10 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.95.1",
     "@google/genai": "^1.36.0",
+    "@types/diff": "^7.0.2",
     "chalk": "^5.6.2",
     "commander": "^14.0.2",
+    "diff": "^9.0.0",
     "env-paths": "^3.0.0",
     "fast-glob": "^3.3.3",
     "keytar": "^7.9.0",

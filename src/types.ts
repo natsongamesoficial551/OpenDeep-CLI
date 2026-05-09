@@ -110,5 +110,5 @@ export interface SlashCommand {
   aliases?: string[]
   usage: string
   description: string
-  category: 'Core' | 'Provider' | 'Model' | 'Agent' | 'Project' | 'Session' | 'Config'
+  category: 'Core' | 'Provider' | 'Model' | 'Agent' | 'Project' | 'Session' | 'Config' | 'Tools' | 'Permissions'
 }
