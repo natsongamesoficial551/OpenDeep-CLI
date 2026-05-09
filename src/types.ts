@@ -76,3 +76,39 @@ export interface OpenDeepConfig {
     color: boolean
   }
 }
+
+export interface SessionRecord {
+  id: string
+  title: string
+  projectPath: string
+  provider: string
+  model: string
+  agent?: string | undefined
+  messages: ChatMessage[]
+  createdAt: string
+  updatedAt: string
+}
+
+export interface ProjectRecord {
+  id: string
+  name: string
+  path: string
+  lastSessionId?: string | undefined
+  updatedAt: string
+}
+
+export interface ChatRuntimeState {
+  providerId: string
+  model: string
+  agent: string
+  project: ProjectRecord
+  session: SessionRecord
+}
+
+export interface SlashCommand {
+  name: string
+  aliases?: string[]
+  usage: string
+  description: string
+  category: 'Core' | 'Provider' | 'Model' | 'Agent' | 'Project' | 'Session' | 'Config'
+}

@@ -1,11 +1,15 @@
 import { Command } from 'commander'
 import { readFile } from 'node:fs/promises'
-import { loadConfig, saveConfig, updateConfig, configPath } from './config/config.js'
+import { loadConfig, updateConfig, configPath } from './config/config.js'
 import { runChat, runPrompt } from './chat/chat.js'
 import { getProviderConfigs } from './providers/registry.js'
 import { redactObject, safeError } from './security/redact.js'
 import { doctor } from './doctor.js'
 import { previewImports } from './importers/importers.js'
+import { formatModelCatalog } from './providers/modelCatalog.js'
+import { listSessions, loadSession, formatSessionList } from './sessions/sessionStore.js'
+import { formatProjectList, listProjects, upsertProject } from './projects/projectStore.js'
+import { configureApiKey } from './auth/auth.js'
 
 export async function runCli(argv: string[]) {
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
@@ -44,6 +48,42 @@ export async function runCli(argv: string[]) {
       })
       console.log(`Default: ${next.defaultProvider}/${next.defaultModel}`)
     })
+
+  program.command('models')
+    .description('List recommended models')
+    .argument('[provider]')
+    .action(async (provider?: string) => console.log(formatModelCatalog(getProviderConfigs(await loadConfig()), provider)))
+
+  program.command('auth')
+    .description('Configure provider API key securely')
+    .argument('<provider>')
+    .action(async (providerId: string) => {
+      const provider = getProviderConfigs(await loadConfig()).find((item) => item.id === providerId)
+      if (!provider) throw new Error(`Unknown provider: ${providerId}`)
+      console.log(await configureApiKey(provider))
+    })
+
+  program.command('sessions')
+    .description('List recent sessions')
+    .action(async () => console.log(formatSessionList(await listSessions())))
+
+  program.command('session')
+    .description('Show a session by id')
+    .argument('<id>')
+    .action(async (id: string) => {
+      const session = await loadSession(id)
+      if (!session) throw new Error(`Session not found: ${id}`)
+      console.log(JSON.stringify(session, null, 2))
+    })
+
+  program.command('projects')
+    .description('List recent projects')
+    .action(async () => console.log(formatProjectList(await listProjects())))
+
+  program.command('project')
+    .description('Register current or provided project path')
+    .argument('[path]')
+    .action(async (path?: string) => console.log(JSON.stringify(await upsertProject(path ?? process.cwd()), null, 2)))
 
   program.command('config')
     .description('Show safe config')
