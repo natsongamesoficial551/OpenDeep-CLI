@@ -6,9 +6,20 @@ import { getConfigDirs } from '../config/paths.js'
 
 const SERVICE = 'opendeep'
 
-async function loadKeytar(): Promise<{ getPassword(service: string, account: string): Promise<string | null>; setPassword(service: string, account: string, password: string): Promise<void>; deletePassword(service: string, account: string): Promise<boolean> } | undefined> {
+type KeytarApi = {
+  getPassword(service: string, account: string): Promise<string | null>
+  setPassword(service: string, account: string, password: string): Promise<void>
+  deletePassword(service: string, account: string): Promise<boolean>
+}
+
+async function loadKeytar(): Promise<KeytarApi | undefined> {
   try {
-    return await import('keytar')
+    const imported = await import('keytar')
+    const candidate = ('default' in imported ? imported.default : imported) as Partial<KeytarApi>
+    if (typeof candidate.getPassword === 'function' && typeof candidate.setPassword === 'function' && typeof candidate.deletePassword === 'function') {
+      return candidate as KeytarApi
+    }
+    return undefined
   } catch {
     return undefined
   }
