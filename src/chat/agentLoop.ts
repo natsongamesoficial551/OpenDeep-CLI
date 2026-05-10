@@ -167,18 +167,18 @@ function createToolContext(state: ChatRuntimeState, config: OpenDeepConfig, sign
   }
 }
 
-async function executeToolCall(call: ToolCall, ctx: ToolContext): Promise<ChatMessage> {
-  const task = renderTaskStart(call.name, call.arguments)
+async function executeToolCall(call: ToolCall, ctx: ToolContext, statusContext: { providerId: string; model: string; taskIndex: number }): Promise<ChatMessage> {
+  const task = renderTaskStart(call.name, call.arguments, statusContext)
   if (call.parseError) {
     const content = `Tool arguments JSON parse error: ${call.parseError}\nRaw arguments: ${call.rawArguments ?? ''}`
-    renderTaskFinish(call.name, task.label, task.startedAt, 'error')
+    renderTaskFinish(call.name, task.label, task.startedAt, 'error', task.context)
     renderToolError(call.name, content)
     return { role: 'tool', name: call.name, toolCallId: call.id, content }
   }
 
   try {
     const result = await runTool(call.name, call.arguments, ctx)
-    renderTaskFinish(call.name, task.label, task.startedAt, 'done')
+    renderTaskFinish(call.name, task.label, task.startedAt, 'done', task.context)
     renderToolResult(call.name, result)
     return {
       role: 'tool',
@@ -189,7 +189,7 @@ async function executeToolCall(call: ToolCall, ctx: ToolContext): Promise<ChatMe
     }
   } catch (error) {
     const content = `Tool ${call.name} failed: ${safeError(error)}`
-    renderTaskFinish(call.name, task.label, task.startedAt, ctx.signal?.aborted ? 'cancelled' : 'error')
+    renderTaskFinish(call.name, task.label, task.startedAt, ctx.signal?.aborted ? 'cancelled' : 'error', task.context)
     renderToolError(call.name, error)
     return { role: 'tool', name: call.name, toolCallId: call.id, content }
   }
@@ -220,6 +220,7 @@ export async function runAgentTurn(input: { state: ChatRuntimeState; config: Ope
   const toolSpecs = toolsToSpecs(tools)
   const ctx = createToolContext(state, config, signal)
   let finalAnswer = ''
+  let taskIndex = state.session.messages.filter((message) => message.role === 'tool').length
 
   for (let iteration = 0; iteration < MAX_AGENT_ITERATIONS; iteration += 1) {
     let response
@@ -260,7 +261,8 @@ export async function runAgentTurn(input: { state: ChatRuntimeState; config: Ope
     }
 
     for (const call of toolCalls) {
-      const toolMessage = await executeToolCall(call, ctx)
+      taskIndex += 1
+      const toolMessage = await executeToolCall(call, ctx, { providerId: state.providerId, model: state.model, taskIndex })
       appendMessage(state.session, toolMessage)
       await saveSession(state.session)
     }

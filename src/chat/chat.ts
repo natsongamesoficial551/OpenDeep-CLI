@@ -18,6 +18,7 @@ import { formatPermissionRules, addPermissionRule, loadPermissionRules, Permissi
 import { getSecret } from '../security/secrets.js'
 import { saveConfig } from '../config/config.js'
 import { runAgentTurn } from './agentLoop.js'
+import { box, terminalWidth } from '../ui/terminal.js'
 
 export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter) {
   const providerConfig = getProviderConfigs(config).find((item) => item.id === provider.config.id) ?? provider.config
@@ -107,6 +108,32 @@ function compactCharCount(chars: number) {
 export function inputDraftDisplay(draft: InputDraft) {
   if (draft.pastedChars > 0) return `[Pasted ${compactCharCount(draft.pastedChars)} chars]`
   return draft.buffer
+}
+
+type ChatInputRenderOptions = {
+  draft: InputDraft
+  providerId: string
+  model: string
+  agent: string
+  taskCount?: number
+  elapsedMs?: number
+  phase?: string
+  width?: number
+}
+
+function formatMs(ms = 0) {
+  if (ms < 1000) return `${ms}ms`
+  return `${(ms / 1000).toFixed(1).replace(/\.0$/, '')}s`
+}
+
+export function renderChatInputLines(options: ChatInputRenderOptions) {
+  const width = options.width ?? terminalWidth()
+  const phase = options.phase ?? 'IA pronta'
+  const tasks = options.taskCount ?? 0
+  const elapsed = formatMs(options.elapsedMs ?? 0)
+  const status = chalk.dim(`${phase}  •  tasks ${tasks}  •  tempo ${elapsed}  •  ${options.providerId}/${options.model}  •  agent ${options.agent}`)
+  const inputBox = box('Você', chalk.bold(`› ${inputDraftDisplay(options.draft)}`), { width, color: chalk.green })
+  return [status, inputBox]
 }
 
 function appendPastedInput(draft: InputDraft, text: string) {
@@ -255,7 +282,7 @@ async function pickByArrows(title: string, items: string[], emptyLabel = 'Nenhum
   }
 }
 
-async function readChatInput(rl: PromptReader) {
+async function readChatInput(rl: PromptReader, state?: ChatRuntimeState, sessionStartedAt = Date.now()) {
   if (!input.isTTY) return (await rl.question(chalk.bold('› '))).trim()
   const stdin = input
   const wasRaw = stdin.isRaw
@@ -274,7 +301,16 @@ async function readChatInput(rl: PromptReader) {
   const render = () => {
     if (drawn) clearRenderedLines(drawn)
     const rows = slashRows()
-    const lines = [chalk.bold(`› ${inputDraftDisplay(draft)}`)]
+    const lines = state
+      ? renderChatInputLines({
+        draft,
+        providerId: state.providerId,
+        model: state.model,
+        agent: state.agent,
+        taskCount: state.session.messages.filter((message) => message.role === 'tool').length,
+        elapsedMs: Date.now() - sessionStartedAt,
+      })
+      : [chalk.bold(`› ${inputDraftDisplay(draft)}`)]
     if (rows.length) {
       if (selected >= rows.length) selected = 0
       lines.push(chalk.dim('Comandos: ↑/↓ + Enter'))
@@ -742,13 +778,14 @@ function watchAbortKey(controller: AbortController) {
 export async function runChat(config: OpenDeepConfig) {
   const rl = readline.createInterface({ input, output, historySize: 200 })
   const state = await initialState(config)
+  const chatStartedAt = Date.now()
   renderHeader(state)
 
   try {
     while (true) {
       let text: string
       try {
-        text = await readChatInput(rl)
+        text = await readChatInput(rl, state, chatStartedAt)
       } catch (error) {
         if (error instanceof Error && /readline was closed/i.test(error.message)) break
         throw error

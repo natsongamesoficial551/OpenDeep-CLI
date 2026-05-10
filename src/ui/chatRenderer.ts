@@ -16,7 +16,7 @@ export function renderHeader(state: ChatRuntimeState) {
 }
 
 export function renderUserBubble(text: string) {
-  console.log('\n' + box('You', text, { color: chalk.green }))
+  console.log('\n' + box('Você', text, { color: chalk.green }))
 }
 
 export function renderAssistantStart() {

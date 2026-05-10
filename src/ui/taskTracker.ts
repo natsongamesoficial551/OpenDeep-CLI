@@ -10,6 +10,9 @@ export interface TaskLine {
   toolName: string
   status: TaskStatus
   durationMs?: number | undefined
+  providerId?: string | undefined
+  model?: string | undefined
+  taskIndex?: number | undefined
 }
 
 function asObject(value: unknown): ToolArgs {
@@ -66,17 +69,26 @@ function statusIcon(status: TaskStatus) {
 export function renderTaskLine(task: TaskLine, width = terminalWidth()) {
   const duration = formatDuration(task.durationMs)
   const tool = chalk.dim(task.toolName)
-  const labelWidth = Math.max(12, width - 22)
-  const plainLabel = truncateText(task.label, labelWidth)
-  return `${statusIcon(task.status)} ${padVisible(plainLabel, labelWidth)} ${tool.padEnd(10)} ${chalk.dim(duration)}`
+  const modelTag = task.providerId && task.model ? `${task.providerId}/${task.model}` : ''
+  const suffix = [tool, chalk.dim(duration), modelTag ? chalk.dim(modelTag) : ''].filter(Boolean).join('  ')
+  const index = task.taskIndex !== undefined ? `[${task.taskIndex}] ` : ''
+  const labelBudget = Math.max(12, width - 4 - suffix.replace(/\u001b\[[0-9;]*m/g, '').length)
+  const plainLabel = truncateText(`${index}${task.label}`, labelBudget)
+  return `${statusIcon(task.status)} ${padVisible(plainLabel, labelBudget)} ${suffix}`
 }
 
-export function renderTaskStart(toolName: string, args: unknown) {
+type TaskRenderContext = {
+  providerId?: string | undefined
+  model?: string | undefined
+  taskIndex?: number | undefined
+}
+
+export function renderTaskStart(toolName: string, args: unknown, context: TaskRenderContext = {}) {
   const label = formatToolLabel(toolName, args)
-  console.log(`\n${renderTaskLine({ label, toolName, status: 'running' })}`)
-  return { label, startedAt: Date.now() }
+  console.log(`\n${renderTaskLine({ label, toolName, status: 'running', ...context })}`)
+  return { label, startedAt: Date.now(), context }
 }
 
-export function renderTaskFinish(toolName: string, label: string, startedAt: number, status: Exclude<TaskStatus, 'pending' | 'running'> = 'done') {
-  console.log(renderTaskLine({ label, toolName, status, durationMs: Date.now() - startedAt }))
+export function renderTaskFinish(toolName: string, label: string, startedAt: number, status: Exclude<TaskStatus, 'pending' | 'running'> = 'done', context: TaskRenderContext = {}) {
+  console.log(renderTaskLine({ label, toolName, status, durationMs: Date.now() - startedAt, ...context }))
 }
