@@ -9,8 +9,9 @@ import { toolsToSpecs } from '../tools/providerSchema.js'
 import { ToolDefinition, ToolContext } from '../tools/tool.js'
 import { safeError } from '../security/redact.js'
 
-const MAX_AGENT_ITERATIONS = 8
+const MAX_AGENT_ITERATIONS = 20
 const WRITE_INTENT = /\b(cri(e|ar|a)|criar|crie|ger(e|ar)|gerar|fa(ç|c)a|fazer|write|create|edit|editar|modificar|salvar|arquivo|site|index\.html|style\.css|script\.js)\b/i
+const TEXT_TOOL_ALIASES: Record<string, string> = { shell: 'bash', command: 'bash' }
 
 function hasWriteIntent(messages: ChatMessage[]) {
   const lastUser = [...messages].reverse().find((message) => message.role === 'user')
@@ -33,8 +34,11 @@ function systemPrompt(state: ChatRuntimeState) {
     'You are DeepCode, a terminal coding agent.',
     `Current project path: ${state.project.path}`,
     'Use tools when you need to inspect files, search code, edit files, create directories, or run commands.',
-    'If native tool calls are unavailable and you must run a local command, output a JSON object like {"cmd":"<command>"}; DeepCode will execute it after the permission check. Do not merely describe commands when the user asked you to create or change files.',
-    'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir/write or an executable {"cmd":"..."} command to create the requested files for real.',
+    'Prefer native tools for filesystem work: mkdir for folders, write for new/complete files, edit for targeted changes. Do NOT use PowerShell/cmd/bash to write long file contents when write is available.',
+    'On Windows, avoid long powershell -Command/heredoc commands for generated files. They commonly fail with command-line length or string terminator errors. Split work into multiple write tool calls instead.',
+    'If native tool calls are unavailable and you must call a tool from text, output compact JSON for the real tool, for example {"tool":"write","args":{"filePath":"index.html","content":"..."}} or {"tool":"mkdir","args":{"dirPath":"site"}}. Use {"cmd":"<command>"} only for short shell commands.',
+    'Do not merely describe commands when the user asked you to create or change files; actually call tools.',
+    'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir/write/edit tool calls to create the requested files for real.',
     'For requested static sites, create index.html, style.css, and script.js when asked, unless the user asks for a different structure.',
     writeIntent ? 'The latest user request appears to require writing/creating files, so write-capable tools are available for this turn.' : '',
     'Do not claim that you read, edited, searched, or ran anything unless you actually used a tool and received a tool result.',
@@ -47,18 +51,50 @@ function messagesWithSystem(state: ChatRuntimeState): ChatMessage[] {
   return [{ role: 'system', content: systemPrompt(state) }, ...state.session.messages]
 }
 
-function textualToolCommand(value: unknown) {
+function normalizeTextToolArgs(toolName: string, args: unknown) {
+  if (!args || typeof args !== 'object' || Array.isArray(args)) return args
+  const record = { ...(args as Record<string, unknown>) }
+
+  if (toolName === 'write') {
+    const filePath = record.filePath ?? record.file_path ?? record.path ?? record.filename
+    if (typeof filePath === 'string') record.filePath = filePath
+    delete record.file_path
+    delete record.path
+    delete record.filename
+  }
+
+  if (toolName === 'mkdir') {
+    const dirPath = record.dirPath ?? record.dir_path ?? record.path ?? record.directory
+    if (typeof dirPath === 'string') record.dirPath = dirPath
+    delete record.dir_path
+    delete record.path
+    delete record.directory
+  }
+
+  if (toolName === 'bash') {
+    const command = record.command ?? record.cmd
+    if (typeof command === 'string') record.command = command
+    delete record.cmd
+  }
+
+  return record
+}
+
+function textualToolCall(value: unknown): Omit<ToolCall, 'id' | 'rawArguments'> | undefined {
   if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
   const record = value as Record<string, unknown>
-  const command = record.cmd ?? record.command
-  if (typeof command === 'string' && command.trim()) return command.trim()
-  const tool = record.tool ?? record.name
-  const args = record.arguments ?? record.args
-  if ((tool === 'bash' || tool === 'shell') && args && typeof args === 'object' && !Array.isArray(args)) {
-    const argCommand = (args as Record<string, unknown>).command ?? (args as Record<string, unknown>).cmd
-    if (typeof argCommand === 'string' && argCommand.trim()) return argCommand.trim()
+  const directCommand = record.cmd ?? record.command
+  if (typeof directCommand === 'string' && directCommand.trim()) {
+    return { name: 'bash', arguments: { command: directCommand.trim() } }
   }
-  return undefined
+
+  const rawToolName = record.tool ?? record.name
+  if (typeof rawToolName !== 'string' || !rawToolName.trim()) return undefined
+  const aliasedName = TEXT_TOOL_ALIASES[rawToolName.trim()] ?? rawToolName.trim()
+  if (!BUILTIN_TOOLS.some((tool) => tool.id === aliasedName)) return undefined
+
+  const args = record.arguments ?? record.args ?? record.input ?? {}
+  return { name: aliasedName, arguments: normalizeTextToolArgs(aliasedName, args) }
 }
 
 function findJsonObjects(text: string) {
@@ -95,27 +131,27 @@ function findJsonObjects(text: string) {
   return found
 }
 
-function commandToolCallsFromText(content: string): { calls: ToolCall[]; cleanedContent: string } {
+export function commandToolCallsFromText(content: string): { calls: ToolCall[]; cleanedContent: string } {
   const objects = findJsonObjects(content)
-  const commands = objects
-    .map((item) => ({ ...item, command: textualToolCommand(item.value) }))
-    .filter((item): item is { start: number; end: number; value: unknown; command: string } => typeof item.command === 'string')
+  const toolObjects = objects
+    .map((item) => ({ ...item, call: textualToolCall(item.value) }))
+    .filter((item): item is { start: number; end: number; value: unknown; call: Omit<ToolCall, 'id' | 'rawArguments'> } => !!item.call)
 
-  if (!commands.length) return { calls: [], cleanedContent: content }
+  if (!toolObjects.length) return { calls: [], cleanedContent: content }
 
   let cleanedContent = content
-  for (const item of [...commands].reverse()) {
+  for (const item of [...toolObjects].reverse()) {
     cleanedContent = `${cleanedContent.slice(0, item.start)}${cleanedContent.slice(item.end)}`
   }
   cleanedContent = cleanedContent.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
 
   return {
     cleanedContent,
-    calls: commands.map((item, index) => ({
-      id: `text_cmd_${Date.now()}_${index}`,
-      name: 'bash',
-      arguments: { command: item.command },
-      rawArguments: JSON.stringify({ command: item.command }),
+    calls: toolObjects.map((item, index) => ({
+      id: `text_tool_${Date.now()}_${index}`,
+      name: item.call.name,
+      arguments: item.call.arguments,
+      rawArguments: JSON.stringify(item.call.arguments),
     })),
   }
 }

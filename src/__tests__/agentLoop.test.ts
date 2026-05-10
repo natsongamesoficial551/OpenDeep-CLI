@@ -132,7 +132,7 @@ test('agent loop stops after max iterations', async () => {
     const provider = new InfiniteToolProvider()
     const answer = await runAgentTurn({ state, config: DEFAULT_CONFIG, provider })
     assert.match(answer, /Agent loop stopped/)
-    assert.equal(provider.calls, 8)
+    assert.equal(provider.calls, 20)
   } finally {
     await cleanup()
   }
