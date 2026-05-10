@@ -92,7 +92,7 @@ function stringValue(value: unknown) {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined
 }
 
-function parseChatgptAccountId(token: string | null | undefined) {
+export function parseChatgptAccountId(token: string | null | undefined) {
   const payload = parseJwtPayload(token)
   const auth = nestedRecord(payload, 'https://api.openai.com/auth')
   return stringValue(auth?.chatgpt_account_id)

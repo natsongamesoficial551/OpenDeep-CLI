@@ -3,6 +3,12 @@ import { ChatRequest, ProviderAdapter, ProviderConfig, ChatMessage, ToolSpec, To
 import { getSecret } from '../security/secrets.js'
 import { getCodexOAuthAccessToken, getCodexOAuthCredentials } from '../auth/auth.js'
 
+
+async function ensureImportedCodexLocalAuth() {
+  const imported = await import('../importers/importers.js')
+  await imported.importCodexLocalAuth()
+}
+
 function toOpenAIMessages(messages: ChatMessage[]) {
   return messages.map((message) => ({ role: message.role === 'tool' ? 'user' : message.role, content: message.content })) as Array<{ role: 'system' | 'user' | 'assistant'; content: string }>
 }
@@ -179,6 +185,10 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
     if (this.isCodexOAuth()) {
       apiKey = await getCodexOAuthAccessToken()
       if (!apiKey) {
+        await ensureImportedCodexLocalAuth()
+        apiKey = await getCodexOAuthAccessToken()
+      }
+      if (!apiKey) {
         throw new Error('Codex OAuth não configurado. Rode /login codex-oauth (ou comando "codex") para autenticar via navegador.')
       }
     }
@@ -190,7 +200,17 @@ export class OpenAICompatibleAdapter implements ProviderAdapter {
   }
 
   private async codexCredentials() {
-    const credentials = await getCodexOAuthCredentials()
+    let credentials
+    try {
+      credentials = await getCodexOAuthCredentials()
+    } catch {
+      await ensureImportedCodexLocalAuth()
+      credentials = await getCodexOAuthCredentials()
+    }
+    if (!credentials.apiKey || !credentials.accountId) {
+      await ensureImportedCodexLocalAuth()
+      credentials = await getCodexOAuthCredentials()
+    }
     if (!credentials.apiKey) {
       throw new Error('Codex OAuth não configurado. Rode /login codex-oauth (ou comando "codex") para autenticar via navegador.')
     }

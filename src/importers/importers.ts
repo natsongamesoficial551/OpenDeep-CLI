@@ -4,6 +4,7 @@ import { join } from 'node:path'
 import { homedir } from 'node:os'
 import { ProviderProfile } from '../types.js'
 import { setSecret } from '../security/secrets.js'
+import { parseChatgptAccountId } from '../auth/auth.js'
 
 export interface ImportPreview {
   sources: string[]
@@ -65,6 +66,43 @@ function tokenFromJson(data: Record<string, unknown> | undefined): string | unde
   return undefined
 }
 
+
+function numberValue(value: unknown) {
+  if (typeof value === 'number' && Number.isFinite(value)) return value
+  if (typeof value === 'string' && /^\d+$/.test(value.trim())) return Number(value.trim())
+}
+
+function tokenBundleFromJson(data: Record<string, unknown> | undefined): Record<string, unknown> | undefined {
+  if (!data) return undefined
+  const tokens = data.tokens && typeof data.tokens === 'object' ? data.tokens as Record<string, unknown> : data
+  const accessToken = tokenFromJson(tokens)
+  if (!accessToken) return undefined
+  const refreshToken = typeof tokens.refresh_token === 'string' ? tokens.refresh_token : (typeof tokens.refreshToken === 'string' ? tokens.refreshToken : undefined)
+  const idToken = typeof tokens.id_token === 'string' ? tokens.id_token : (typeof tokens.idToken === 'string' ? tokens.idToken : undefined)
+  const accountId = typeof data.chatgpt_account_id === 'string' ? data.chatgpt_account_id
+    : (typeof tokens.chatgpt_account_id === 'string' ? tokens.chatgpt_account_id
+      : (typeof data.account_id === 'string' ? data.account_id : undefined))
+  const expiresAtRaw = numberValue(tokens.expires_at ?? tokens.expiresAt ?? data.expires_at ?? data.expiresAt)
+  const expiresInRaw = numberValue(tokens.expires_in ?? tokens.expiresIn ?? data.expires_in ?? data.expiresIn)
+  const expiresAt = expiresAtRaw && expiresAtRaw > 10_000_000_000 ? expiresAtRaw : (expiresInRaw ? Date.now() + expiresInRaw * 1000 : undefined)
+  return {
+    accessToken,
+    ...(refreshToken ? { refreshToken } : {}),
+    ...(idToken ? { idToken } : {}),
+    ...(accountId ? { accountId } : {}),
+    ...(expiresAt ? { expiresAt } : {}),
+  }
+}
+
+async function persistCodexAuthBundle(bundle: Record<string, unknown>) {
+  await setSecret('CODEX_OAUTH_TOKEN', String(bundle.accessToken))
+  if (typeof bundle.refreshToken === 'string') await setSecret('CODEX_OAUTH_REFRESH_TOKEN', bundle.refreshToken)
+  if (typeof bundle.idToken === 'string') await setSecret('CODEX_OAUTH_ID_TOKEN', bundle.idToken)
+  const accountId = typeof bundle.accountId === 'string' ? bundle.accountId : parseChatgptAccountId(typeof bundle.idToken === 'string' ? bundle.idToken : String(bundle.accessToken))
+  if (accountId) await setSecret('CODEX_ACCOUNT_ID', accountId)
+  if (typeof bundle.expiresAt === 'number') await setSecret('CODEX_OAUTH_EXPIRES_AT', String(Math.trunc(bundle.expiresAt)))
+}
+
 function codexAuthPaths() {
   const paths = [join(homedir(), '.codex', 'auth.json'), join(homedir(), '.codex', 'config.json')]
   if (process.env.CODEX_AUTH_JSON_PATH) paths.unshift(process.env.CODEX_AUTH_JSON_PATH)
@@ -82,10 +120,10 @@ export async function importCodexLocalAuth() {
 
   for (const path of codexAuthPaths()) {
     const data = await readJson(path)
-    const token = tokenFromJson(data)
-    if (token) {
-      await setSecret('CODEX_OAUTH_TOKEN', token)
-      return { imported: true, source: path, message: 'Credencial Codex importada do login local.' }
+    const bundle = tokenBundleFromJson(data)
+    if (bundle) {
+      await persistCodexAuthBundle(bundle)
+      return { imported: true, source: path, message: 'Credencial Codex importada do login local e salva para reutilização.' }
     }
     if (data) {
       return {

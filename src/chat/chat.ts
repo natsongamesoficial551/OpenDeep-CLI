@@ -11,8 +11,8 @@ import { resolveSlash, searchSlashCommands, SLASH_COMMANDS } from '../commands/s
 import { formatModelCatalog, modelsFor, normalizeModel, parseProviderModel } from '../providers/modelCatalog.js'
 import { configureApiKey } from '../auth/auth.js'
 import { appendMessage, createSession, formatSessionList, listSessions, loadSession, saveSession } from '../sessions/sessionStore.js'
-import { formatProjectList, listProjects, setProjectSession, upsertProject } from '../projects/projectStore.js'
-import { BUILTIN_AGENTS } from '../agents/agents.js'
+import { formatProjectList, listProjects, setProjectSession, upsertProject, createWorkspaceProject, defaultProjectsRoot, projectCreationTargetFromPrompt } from '../projects/projectStore.js'
+import { formatAgentList, getAgent, listAgents, removeCustomAgent, saveCustomAgent } from '../agents/agents.js'
 import { doctor } from '../doctor.js'
 import { formatPermissionRules, addPermissionRule, loadPermissionRules, PermissionCategory } from '../permissions/rules.js'
 import { getSecret } from '../security/secrets.js'
@@ -56,7 +56,14 @@ function providerList(config: OpenDeepConfig) {
 }
 
 function agentList() {
-  return BUILTIN_AGENTS.map((agent) => `${agent.name.padEnd(10)} ${agent.description}`).join('\n')
+  return formatAgentList(listAgents())
+}
+
+async function askAgentDetails(rl: PromptReader, name: string, existing = getAgent(name)) {
+  const description = (await rl.question(chalk.bold(`Descrição (${existing.description ?? ''}): `))).trim() || existing.description || ''
+  const systemPrompt = (await rl.question(chalk.bold('Prompt/instrução do agente: '))).trim() || existing.systemPrompt || ''
+  const model = (await rl.question(chalk.bold(`Modelo opcional provider/model ou modelo (${existing.model ?? 'atual'}): `))).trim() || existing.model
+  return saveCustomAgent({ name, description, systemPrompt, ...(model ? { model } : {}) })
 }
 
 async function initialState(config: OpenDeepConfig): Promise<ChatRuntimeState> {
@@ -605,18 +612,51 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       await applyProviderModel(state, provider.id, chosen)
       return { handled: true, exit: false, state }
     }
-    case 'agents':
-      renderNotice('Agentes', agentList())
+    case 'agents': {
+      const [action, ...rest] = parsed.args.trim().split(/\s+/).filter(Boolean)
+      const name = rest[0] ?? ''
+      if (!action) {
+        renderNotice('Agentes', `${agentList()}\n\nUse /agents add <nome>, /agents edit <nome> ou /agents remove <nome>. Mínimo 3, máximo 12 agentes.`)
+      } else if (action === 'add' || action === 'edit') {
+        if (!name) renderError(`Uso: /agents ${action} <nome>`)
+        else {
+          try {
+            const agent = await askAgentDetails(rl, name)
+            renderNotice('Agente salvo', `${agent.name}\n${agent.description}\nmodel ${agent.model ?? 'atual'}`)
+          } catch (error) { renderError(safeError(error)) }
+        }
+      } else if (action === 'remove' || action === 'delete') {
+        if (!name) renderError('Uso: /agents remove <nome>')
+        else {
+          try { renderNotice('Agentes', await removeCustomAgent(name) ? `Agente removido: ${name}` : `Agente não encontrado: ${name}`) }
+          catch (error) { renderError(safeError(error)) }
+        }
+      } else renderError('Uso: /agents [add|edit|remove] <nome>')
       return { handled: true, exit: false, state }
+    }
     case 'agent': {
       const name = parsed.args.trim()
+      const available = listAgents()
+      const selected = name ? available.find((agent) => agent.name === name) : undefined
       if (!name) renderNotice('Agente atual', `${state.agent}\n\n${agentList()}`)
-      else if (!BUILTIN_AGENTS.some((agent) => agent.name === name)) renderError(`Agente não encontrado: ${name}`)
+      else if (!selected) renderError(`Agente não encontrado: ${name}`)
       else {
-        state.agent = name
-        state.session.agent = name
+        state.agent = selected.name
+        state.session.agent = selected.name
+        if (selected.model) {
+          const parsedModel = parseProviderModel(selected.model, state.providerId)
+          if (parsedModel) {
+            state.providerId = parsedModel.providerId
+            state.model = parsedModel.model
+            state.session.provider = parsedModel.providerId
+            state.session.model = parsedModel.model
+          } else {
+            state.model = selected.model
+            state.session.model = selected.model
+          }
+        }
         await saveSession(state.session)
-        renderNotice('Agente alterado', name)
+        renderNotice('Agente alterado', `${selected.name}${selected.model ? `\nmodel ${state.providerId}/${state.model}` : ''}`)
       }
       return { handled: true, exit: false, state }
     }
@@ -628,7 +668,17 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       if (args.startsWith('add ')) {
         const project = await upsertProject(args.slice(4).trim())
         renderNotice('Projeto registrado', `${project.name}\n${project.path}`)
-      } else renderNotice('Projeto atual', `id     ${state.project.id}\nnome   ${state.project.name}\npath   ${state.project.path}`)
+      } else if (args.startsWith('new ')) {
+        const project = await createWorkspaceProject(args.slice(4).trim(), config)
+        state.project = project
+        state.session = await createSession(project, state.providerId, state.model, state.agent)
+        state.project = await setProjectSession(project, state.session.id)
+        renderNotice('Projeto criado', `${project.name}\n${project.path}`)
+      } else if (args.startsWith('root ')) {
+        config.workspace.projectsDir = args.slice(5).trim()
+        await saveConfig(config)
+        renderNotice('Pasta padrão de projetos', defaultProjectsRoot(config))
+      } else renderNotice('Projeto atual', `id     ${state.project.id}\nnome   ${state.project.name}\npath   ${state.project.path}\nroot   ${defaultProjectsRoot(config)}`)
       return { handled: true, exit: false, state }
     }
     case 'new': {
@@ -796,6 +846,18 @@ export async function runChat(config: OpenDeepConfig) {
         const result = await handleSlash(text, state, config, rl)
         if (result.exit) break
         continue
+      }
+
+      const target = projectCreationTargetFromPrompt(text)
+      if (target) {
+        const project = await createWorkspaceProject(target.name, config, target.explicitPath)
+        if (project.path !== state.project.path) {
+          state.project = project
+          state.session = await createSession(project, state.providerId, state.model, state.agent)
+          state.project = await setProjectSession(project, state.session.id)
+          renderNotice('Projeto criado', `${project.name}
+${project.path}`)
+        }
       }
 
       renderUserBubble(text)

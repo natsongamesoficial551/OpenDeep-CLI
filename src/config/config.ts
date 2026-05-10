@@ -31,6 +31,9 @@ const ConfigSchema = z.object({
     stream: z.boolean().default(true),
     color: z.boolean().default(true),
   }).default({ stream: true, color: true }),
+  workspace: z.object({
+    projectsDir: z.string().default(''),
+  }).default({ projectsDir: '' }),
 })
 
 export const DEFAULT_CONFIG: OpenDeepConfig = ConfigSchema.parse({})

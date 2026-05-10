@@ -14,6 +14,7 @@ type KeytarApi = {
 }
 
 async function loadKeytar(): Promise<KeytarApi | undefined> {
+  if (process.env.DEEPCODE_DISABLE_KEYTAR === '1' || process.env.DEEPCODE_SECRETS_PATH) return undefined
   try {
     const imported = await import('keytar')
     const candidate = ('default' in imported ? imported.default : imported) as Partial<KeytarApi>
@@ -56,6 +57,7 @@ function decrypt(value: string) {
 }
 
 async function fallbackPath(legacy = false) {
+  if (!legacy && process.env.DEEPCODE_SECRETS_PATH) return process.env.DEEPCODE_SECRETS_PATH
   const dirs = legacy ? getLegacyConfigDirs() : getConfigDirs()
   await mkdir(dirs.config, { recursive: true })
   return join(dirs.config, 'secrets.enc.json')

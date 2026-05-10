@@ -101,6 +101,9 @@ export interface OpenDeepConfig {
     stream: boolean
     color: boolean
   }
+  workspace: {
+    projectsDir: string
+  }
 }
 
 export interface SessionRecord {
