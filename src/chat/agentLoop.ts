@@ -33,7 +33,8 @@ function systemPrompt(state: ChatRuntimeState) {
     'You are DeepCode, a terminal coding agent.',
     `Current project path: ${state.project.path}`,
     'Use tools when you need to inspect files, search code, edit files, create directories, or run commands.',
-    'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir and write to create the requested files.',
+    'If native tool calls are unavailable and you must run a local command, output a JSON object like {"cmd":"<command>"}; DeepCode will execute it after the permission check. Do not merely describe commands when the user asked you to create or change files.',
+    'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir/write or an executable {"cmd":"..."} command to create the requested files for real.',
     'For requested static sites, create index.html, style.css, and script.js when asked, unless the user asks for a different structure.',
     writeIntent ? 'The latest user request appears to require writing/creating files, so write-capable tools are available for this turn.' : '',
     'Do not claim that you read, edited, searched, or ran anything unless you actually used a tool and received a tool result.',
@@ -44,6 +45,79 @@ function systemPrompt(state: ChatRuntimeState) {
 
 function messagesWithSystem(state: ChatRuntimeState): ChatMessage[] {
   return [{ role: 'system', content: systemPrompt(state) }, ...state.session.messages]
+}
+
+function textualToolCommand(value: unknown) {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined
+  const record = value as Record<string, unknown>
+  const command = record.cmd ?? record.command
+  if (typeof command === 'string' && command.trim()) return command.trim()
+  const tool = record.tool ?? record.name
+  const args = record.arguments ?? record.args
+  if ((tool === 'bash' || tool === 'shell') && args && typeof args === 'object' && !Array.isArray(args)) {
+    const argCommand = (args as Record<string, unknown>).command ?? (args as Record<string, unknown>).cmd
+    if (typeof argCommand === 'string' && argCommand.trim()) return argCommand.trim()
+  }
+  return undefined
+}
+
+function findJsonObjects(text: string) {
+  const found: Array<{ start: number; end: number; value: unknown }> = []
+  for (let start = text.indexOf('{'); start >= 0; start = text.indexOf('{', start + 1)) {
+    let depth = 0
+    let inString = false
+    let escaped = false
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index]
+      if (inString) {
+        if (escaped) escaped = false
+        else if (char === '\\') escaped = true
+        else if (char === '"') inString = false
+        continue
+      }
+      if (char === '"') {
+        inString = true
+        continue
+      }
+      if (char === '{') depth += 1
+      else if (char === '}') {
+        depth -= 1
+        if (depth === 0) {
+          const end = index + 1
+          try {
+            found.push({ start, end, value: JSON.parse(text.slice(start, end)) })
+          } catch {}
+          break
+        }
+      }
+    }
+  }
+  return found
+}
+
+function commandToolCallsFromText(content: string): { calls: ToolCall[]; cleanedContent: string } {
+  const objects = findJsonObjects(content)
+  const commands = objects
+    .map((item) => ({ ...item, command: textualToolCommand(item.value) }))
+    .filter((item): item is { start: number; end: number; value: unknown; command: string } => typeof item.command === 'string')
+
+  if (!commands.length) return { calls: [], cleanedContent: content }
+
+  let cleanedContent = content
+  for (const item of [...commands].reverse()) {
+    cleanedContent = `${cleanedContent.slice(0, item.start)}${cleanedContent.slice(item.end)}`
+  }
+  cleanedContent = cleanedContent.replace(/[ \t]+\n/g, '\n').replace(/\n{3,}/g, '\n\n').trim()
+
+  return {
+    cleanedContent,
+    calls: commands.map((item, index) => ({
+      id: `text_cmd_${Date.now()}_${index}`,
+      name: 'bash',
+      arguments: { command: item.command },
+      rawArguments: JSON.stringify({ command: item.command }),
+    })),
+  }
 }
 
 function createToolContext(state: ChatRuntimeState, config: OpenDeepConfig, signal?: AbortSignal): ToolContext {
@@ -129,23 +203,27 @@ export async function runAgentTurn(input: { state: ChatRuntimeState; config: Ope
       throw error
     }
 
+    const textualCommands = commandToolCallsFromText(response.content)
+    const toolCalls = response.toolCalls?.length ? response.toolCalls : textualCommands.calls
+    const assistantContent = response.toolCalls?.length ? response.content : textualCommands.cleanedContent
+
     const assistantMessage: ChatMessage = {
       role: 'assistant',
-      content: response.content,
-      ...(response.toolCalls?.length ? { toolCalls: response.toolCalls } : {}),
+      content: assistantContent,
+      ...(toolCalls.length ? { toolCalls } : {}),
     }
     appendMessage(state.session, assistantMessage)
-    if (response.content.trim()) {
-      finalAnswer += response.content
-      renderAssistantBubble(response.content)
+    if (assistantContent.trim()) {
+      finalAnswer += assistantContent
+      renderAssistantBubble(assistantContent)
     }
 
-    if (!response.toolCalls?.length) {
+    if (!toolCalls.length) {
       await saveSession(state.session)
       return finalAnswer
     }
 
-    for (const call of response.toolCalls) {
+    for (const call of toolCalls) {
       const toolMessage = await executeToolCall(call, ctx)
       appendMessage(state.session, toolMessage)
       await saveSession(state.session)
