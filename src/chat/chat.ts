@@ -78,6 +78,80 @@ async function initialState(config: OpenDeepConfig): Promise<ChatRuntimeState> {
 
 type PromptReader = { question(query: string): Promise<string> }
 
+const CTRL_C = String.fromCharCode(3)
+const BACKSPACE = String.fromCharCode(8)
+const ESC = String.fromCharCode(27)
+const DEL = String.fromCharCode(127)
+const BRACKETED_PASTE_START = `${ESC}[200~`
+const BRACKETED_PASTE_END = `${ESC}[201~`
+const ARROW_UP = `${ESC}[A`
+const ARROW_DOWN = `${ESC}[B`
+const ENABLE_BRACKETED_PASTE = `${ESC}[?2004h`
+const DISABLE_BRACKETED_PASTE = `${ESC}[?2004l`
+
+export type InputDraft = {
+  buffer: string
+  pastedChars: number
+}
+
+export function createInputDraft(): InputDraft {
+  return { buffer: '', pastedChars: 0 }
+}
+
+function compactCharCount(chars: number) {
+  if (chars >= 1_000_000) return `${(chars / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`
+  if (chars >= 1_000) return `${(chars / 1_000).toFixed(1).replace(/\.0$/, '')}K`
+  return String(chars)
+}
+
+export function inputDraftDisplay(draft: InputDraft) {
+  if (draft.pastedChars > 0) return `[Pasted ${compactCharCount(draft.pastedChars)} chars]`
+  return draft.buffer
+}
+
+function appendPastedInput(draft: InputDraft, text: string) {
+  draft.buffer += text
+  draft.pastedChars += text.length
+}
+
+function appendTypedInput(draft: InputDraft, text: string) {
+  draft.buffer += text
+}
+
+export function applyInputData(draft: InputDraft, data: string): { submit?: string; clear?: boolean } {
+  if (!data) return {}
+  if (data.includes(CTRL_C)) return { submit: '/exit' }
+  if (data === ESC) {
+    draft.buffer = ''
+    draft.pastedChars = 0
+    return { clear: true }
+  }
+  if (data === DEL || data === BACKSPACE) {
+    draft.buffer = draft.buffer.slice(0, -1)
+    if (draft.pastedChars > draft.buffer.length) draft.pastedChars = draft.buffer.length
+    return {}
+  }
+  if (data === '\r' || data === '\n') return { submit: draft.buffer.trim() }
+
+  let remaining = data
+  while (remaining.includes(BRACKETED_PASTE_START)) {
+    const start = remaining.indexOf(BRACKETED_PASTE_START)
+    const end = remaining.indexOf(BRACKETED_PASTE_END, start)
+    if (start > 0) appendTypedInput(draft, remaining.slice(0, start))
+    if (end === -1) {
+      appendPastedInput(draft, remaining.slice(start + BRACKETED_PASTE_START.length))
+      return {}
+    }
+    appendPastedInput(draft, remaining.slice(start + BRACKETED_PASTE_START.length, end))
+    remaining = remaining.slice(end + BRACKETED_PASTE_END.length)
+  }
+
+  if (!remaining) return {}
+  if (remaining.length > 32 || /[\r\n]/.test(remaining)) appendPastedInput(draft, remaining.replace(/\r\n/g, '\n').replace(/\r/g, '\n'))
+  else appendTypedInput(draft, remaining)
+  return {}
+}
+
 type PickerState = {
   query: string
   selected: number
@@ -185,23 +259,22 @@ async function readChatInput(rl: PromptReader) {
   if (!input.isTTY) return (await rl.question(chalk.bold('› '))).trim()
   const stdin = input
   const wasRaw = stdin.isRaw
-  emitKeypressEvents(stdin)
   stdin.setRawMode(true)
   stdin.resume()
 
-  let buffer = ''
+  const draft = createInputDraft()
   let selected = 0
   let drawn = 0
 
   const slashRows = () => {
-    if (!buffer.startsWith('/') || buffer.includes(' ')) return []
-    return searchSlashCommands(buffer.slice(1)).slice(0, 8)
+    if (draft.pastedChars > 0 || !draft.buffer.startsWith('/') || draft.buffer.includes(' ')) return []
+    return searchSlashCommands(draft.buffer.slice(1)).slice(0, 8)
   }
 
   const render = () => {
     if (drawn) clearRenderedLines(drawn)
     const rows = slashRows()
-    const lines = [chalk.bold(`› ${buffer}`)]
+    const lines = [chalk.bold(`› ${inputDraftDisplay(draft)}`)]
     if (rows.length) {
       if (selected >= rows.length) selected = 0
       lines.push(chalk.dim('Comandos: ↑/↓ + Enter'))
@@ -217,63 +290,48 @@ async function readChatInput(rl: PromptReader) {
   }
 
   render()
+  output.write(ENABLE_BRACKETED_PASTE)
   try {
     const text = await new Promise<string>((resolve) => {
-      const onKey = (_str: string, key: { name?: string; sequence?: string; ctrl?: boolean; meta?: boolean }) => {
+      const finish = (value: string) => {
+        stdin.off('data', onData)
+        resolve(value)
+      }
+      const onData = (chunk: Buffer) => {
+        const data = chunk.toString('utf8')
         const rows = slashRows()
-        if (key.ctrl && key.name === 'c') {
-          stdin.off('keypress', onKey)
-          resolve('/exit')
-          return
-        }
-        if (key.name === 'escape') {
-          buffer = ''
-          selected = 0
-          render()
-          return
-        }
-        if (key.name === 'up') {
+        if (data === ARROW_UP) {
           if (rows.length) {
             selected = (selected - 1 + rows.length) % rows.length
             render()
           }
           return
         }
-        if (key.name === 'down') {
+        if (data === ARROW_DOWN) {
           if (rows.length) {
             selected = (selected + 1) % rows.length
             render()
           }
           return
         }
-        if (key.name === 'backspace') {
-          buffer = buffer.slice(0, -1)
-          selected = 0
-          render()
+        if ((data === '\r' || data === '\n') && rows.length && draft.buffer.startsWith('/') && !draft.buffer.includes(' ')) {
+          const picked = rows[selected]
+          finish(picked ? commandTemplate(picked) : draft.buffer.trim())
           return
         }
-        if (key.name === 'return') {
-          if (rows.length && buffer.startsWith('/') && !buffer.includes(' ')) {
-            const picked = rows[selected]
-            stdin.off('keypress', onKey)
-            resolve(picked ? commandTemplate(picked) : buffer.trim())
-            return
-          }
-          stdin.off('keypress', onKey)
-          resolve(buffer.trim())
+        const result = applyInputData(draft, data)
+        selected = 0
+        if (result.submit !== undefined) {
+          finish(result.submit)
           return
         }
-        const ch = key.sequence ?? ''
-        if (ch && ch >= ' ' && ch !== '\u007f' && !key.ctrl && !key.meta) {
-          buffer += ch
-          selected = 0
-          render()
-        }
+        render()
       }
-      stdin.on('keypress', onKey)
+      stdin.on('data', onData)
     })
     return text
   } finally {
+    output.write(DISABLE_BRACKETED_PASTE)
     if (drawn) clearRenderedLines(drawn)
     if (!wasRaw) stdin.setRawMode(false)
     output.write('\n')
