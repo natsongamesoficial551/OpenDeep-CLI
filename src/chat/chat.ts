@@ -100,10 +100,11 @@ const DISABLE_BRACKETED_PASTE = `${ESC}[?2004l`
 export type InputDraft = {
   buffer: string
   pastedChars: number
+  typedAfterPaste: string
 }
 
 export function createInputDraft(): InputDraft {
-  return { buffer: '', pastedChars: 0 }
+  return { buffer: '', pastedChars: 0, typedAfterPaste: '' }
 }
 
 function compactCharCount(chars: number) {
@@ -113,7 +114,10 @@ function compactCharCount(chars: number) {
 }
 
 export function inputDraftDisplay(draft: InputDraft) {
-  if (draft.pastedChars > 0) return `[Pasted ${compactCharCount(draft.pastedChars)} chars]`
+  if (draft.pastedChars > 0) {
+    const typedAfterPaste = draft.typedAfterPaste ?? ''
+    return `[Pasted ${compactCharCount(draft.pastedChars)} chars]${typedAfterPaste}`
+  }
   return draft.buffer
 }
 
@@ -151,6 +155,7 @@ function appendPastedInput(draft: InputDraft, text: string) {
 
 function appendTypedInput(draft: InputDraft, text: string) {
   draft.buffer += text
+  if (draft.pastedChars > 0) draft.typedAfterPaste = (draft.typedAfterPaste ?? '') + text
 }
 
 export function applyInputData(draft: InputDraft, data: string): { submit?: string; clear?: boolean } {
@@ -159,11 +164,13 @@ export function applyInputData(draft: InputDraft, data: string): { submit?: stri
   if (data === ESC) {
     draft.buffer = ''
     draft.pastedChars = 0
+    draft.typedAfterPaste = ''
     return { clear: true }
   }
   if (data === DEL || data === BACKSPACE) {
     draft.buffer = draft.buffer.slice(0, -1)
-    if (draft.pastedChars > draft.buffer.length) draft.pastedChars = draft.buffer.length
+    if (draft.typedAfterPaste) draft.typedAfterPaste = draft.typedAfterPaste.slice(0, -1)
+    else if (draft.pastedChars > draft.buffer.length) draft.pastedChars = draft.buffer.length
     return {}
   }
   if (data === '\r' || data === '\n') return { submit: draft.buffer.trim() }

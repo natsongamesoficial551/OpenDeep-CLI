@@ -24,3 +24,14 @@ test('bracketed paste is unwrapped, masked, and submitted complete on enter', ()
   assert.equal(result.submit, pasted)
   assert.equal(inputDraftDisplay(draft).startsWith('[Pasted '), true)
 })
+
+test('typed text after a pasted prompt remains visible beside the pasted marker', () => {
+  const draft = createInputDraft()
+  const pasted = `Crie um SaaS completo\n${'feature detalhada\n'.repeat(80)}`
+
+  applyInputData(draft, `\u001b[200~${pasted}\u001b[201~`)
+  applyInputData(draft, ' com login e dashboard')
+
+  assert.equal(draft.buffer, `${pasted} com login e dashboard`)
+  assert.match(inputDraftDisplay(draft), /^\[Pasted [\d.]+[KMG]? chars\] com login e dashboard$/)
+})
