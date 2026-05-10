@@ -9,24 +9,37 @@ import { toolsToSpecs } from '../tools/providerSchema.js'
 import { ToolDefinition, ToolContext } from '../tools/tool.js'
 import { safeError } from '../security/redact.js'
 
-const MAX_AGENT_ITERATIONS = 20
+const MAX_AGENT_ITERATIONS = 40
 const WRITE_INTENT = /\b(cri(e|ar|a)|criar|crie|ger(e|ar)|gerar|fa(ç|c)a|fazer|write|create|edit|editar|modificar|salvar|arquivo|site|index\.html|style\.css|script\.js)\b/i
 const TEXT_TOOL_ALIASES: Record<string, string> = { shell: 'bash', command: 'bash' }
 
+const AUTONOMOUS_VERIFICATION_POLICY = [
+  'Autonomous verification policy:',
+  '- Work like a production autonomous coding agent: inspect first, implement with real tool calls, then verify locally before finalizing.',
+  '- For code changes, infer and run local tests/builds/lints from the project: npm/pnpm/yarn/bun scripts for JS/TS, pytest/unittest/ruff/mypy for Python, cargo test for Rust, go test for Go, or the closest available command.',
+  '- For HTML/static/frontend/web apps, run or start the app with bash/run_background when needed, then use browser_check against the local URL or file-served page to catch console errors, network failures, and broken rendering. Stop background jobs with job_stop after validation.',
+  '- Use web_fetch to consult current docs/examples when APIs, package behavior, errors, or setup steps are uncertain. Prefer official documentation when available.',
+  '- If any test/build/lint/browser/tool check fails, do not stop at the first failure: read the full error, fix the root cause, edit the code, then rerun the relevant check. Repeat until the checks pass or you hit a real external blocker.',
+  '- Do not claim success until the changed feature was actually tested. In the final answer, report exactly which checks passed and mention any check that could not be run with the reason.',
+].join('\n')
+
+function effectiveAgentForTurn(agentName: string, messages: ChatMessage[] = []) {
+  return hasWriteIntent(messages) ? getAgent('build') : getAgent(agentName)
+}
 function hasWriteIntent(messages: ChatMessage[]) {
   const lastUser = [...messages].reverse().find((message) => message.role === 'user')
   return lastUser ? WRITE_INTENT.test(lastUser.content) : false
 }
 
 export function toolsForAgent(agentName: string, messages: ChatMessage[] = []): ToolDefinition[] {
-  const effectiveAgent = hasWriteIntent(messages) ? getAgent('build') : getAgent(agentName)
+  const effectiveAgent = effectiveAgentForTurn(agentName, messages)
   if (!effectiveAgent.tools) return [...BUILTIN_TOOLS]
   const allowed = new Set(effectiveAgent.tools)
   return BUILTIN_TOOLS.filter((tool) => allowed.has(tool.id))
 }
 
 function systemPrompt(state: ChatRuntimeState) {
-  const agent = getAgent(state.agent)
+  const agent = effectiveAgentForTurn(state.agent, state.session.messages)
   const writeIntent = hasWriteIntent(state.session.messages)
   return [
     agent.systemPrompt,
@@ -41,6 +54,7 @@ function systemPrompt(state: ChatRuntimeState) {
     'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir/write/edit tool calls to create the requested files for real.',
     'For requested static sites, create index.html, style.css, and script.js when asked, unless the user asks for a different structure.',
     writeIntent ? 'The latest user request appears to require writing/creating files, so write-capable tools are available for this turn.' : '',
+    writeIntent ? AUTONOMOUS_VERIFICATION_POLICY : '',
     'Do not claim that you read, edited, searched, or ran anything unless you actually used a tool and received a tool result.',
     'Before editing existing files, read the relevant file first. For new files, use mkdir for directories and write for file contents.',
     'Respect permission prompts and never try to bypass safety checks.',

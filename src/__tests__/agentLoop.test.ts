@@ -53,6 +53,17 @@ class FallbackProvider implements ProviderAdapter {
   async *stream(): AsyncIterable<string> { yield 'fallback text' }
 }
 
+class CapturingProvider implements ProviderAdapter {
+  config = { id: 'capture', name: 'Capture', kind: 'openai-compatible' as const, defaultModel: 'fake' }
+  requests: Parameters<NonNullable<ProviderAdapter['completeWithTools']>>[0][] = []
+  async complete(): Promise<string> { return 'fallback' }
+  async *stream(): AsyncIterable<string> { yield 'fallback' }
+  async completeWithTools(request: Parameters<NonNullable<ProviderAdapter['completeWithTools']>>[0]): Promise<ChatResponse> {
+    this.requests.push(request)
+    return { content: 'Verifiquei tudo.' }
+  }
+}
+
 async function makeState(): Promise<{ state: ChatRuntimeState; cleanup: () => Promise<void> }> {
   const dir = await mkdtemp(join(tmpdir(), 'opendeep-agent-'))
   await writeFile(join(dir, 'a.txt'), 'hello')
@@ -69,6 +80,34 @@ async function makeState(): Promise<{ state: ChatRuntimeState; cleanup: () => Pr
 test('toolsForAgent filters registered tools', () => {
   assert.deepEqual(toolsForAgent('plan').map((tool) => tool.id).sort(), ['git_diff', 'git_log', 'git_status', 'glob', 'grep', 'list', 'read'])
   assert.ok(toolsForAgent('general').some((tool) => tool.id === 'bash'))
+})
+
+test('write-intent turns DeepCode into an autonomous validation agent with terminal, web, and browser tools', async () => {
+  const { state, cleanup } = await makeState()
+  try {
+    state.session.messages = [{ role: 'user', content: 'crie um app html com python e javascript e deixe funcionando' }]
+    const provider = new CapturingProvider()
+    const answer = await runAgentTurn({ state, config: DEFAULT_CONFIG, provider })
+
+    assert.equal(answer, 'Verifiquei tudo.')
+    const request = provider.requests[0]
+    assert.ok(request)
+    const system = request.messages.find((message) => message.role === 'system')?.content ?? ''
+    const toolNames = request.tools?.map((tool) => tool.name) ?? []
+
+    assert.match(system, /Autonomous verification policy/i)
+    assert.match(system, /run local tests/i)
+    assert.match(system, /browser_check/i)
+    assert.match(system, /web_fetch/i)
+    assert.match(system, /fix the root cause/i)
+    assert.match(system, /rerun/i)
+    assert.ok(toolNames.includes('bash'))
+    assert.ok(toolNames.includes('run_background'))
+    assert.ok(toolNames.includes('browser_check'))
+    assert.ok(toolNames.includes('web_fetch'))
+  } finally {
+    await cleanup()
+  }
 })
 
 test('agent loop executes tool calls and persists results', async () => {
@@ -132,7 +171,7 @@ test('agent loop stops after max iterations', async () => {
     const provider = new InfiniteToolProvider()
     const answer = await runAgentTurn({ state, config: DEFAULT_CONFIG, provider })
     assert.match(answer, /Agent loop stopped/)
-    assert.equal(provider.calls, 20)
+    assert.equal(provider.calls, 40)
   } finally {
     await cleanup()
   }

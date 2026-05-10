@@ -40,7 +40,7 @@ export const browserCheckTool = defineTool({
 
       const response = await page.goto(url.toString(), { waitUntil: 'domcontentloaded', timeout: Math.max(args.waitMs, 5_000) })
       await page.waitForTimeout(args.waitMs)
-      if (args.selector) await page.waitForSelector(args.selector, { timeout: args.waitMs })
+      if (args.selector) await page.waitForSelector(args.selector, { timeout: Math.max(args.waitMs, 5_000) })
       if (args.screenshot) {
         const dir = await mkdtemp(join(tmpdir(), 'opendeep-browser-'))
         screenshotPath = join(dir, 'screenshot.png')
