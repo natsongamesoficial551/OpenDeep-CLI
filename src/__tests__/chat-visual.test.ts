@@ -27,6 +27,24 @@ test('chat input renders status above a bordered input bubble', () => {
   assert.match(rendered, /╰─+/)
 })
 
+test('chat input renderer returns flat physical lines so redraw can clear everything', () => {
+  const draft = createInputDraft()
+  draft.buffer = 'Olá tudo bem'
+
+  const lines = renderChatInputLines({
+    draft,
+    providerId: 'codex-oauth',
+    model: 'gpt-5.5',
+    agent: 'general',
+    taskCount: 0,
+    elapsedMs: 147_000,
+    width: 72,
+  })
+
+  assert.equal(lines.length, 4)
+  assert.ok(lines.every((line) => !stripAnsi(line).includes('\n')))
+})
+
 test('task status line can show provider and model without becoming a bubble', () => {
   const rendered = stripAnsi(renderTaskLine({
     label: 'Escrevendo index.html',

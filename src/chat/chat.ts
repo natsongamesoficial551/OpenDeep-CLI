@@ -18,7 +18,7 @@ import { formatPermissionRules, addPermissionRule, loadPermissionRules, Permissi
 import { getSecret } from '../security/secrets.js'
 import { saveConfig } from '../config/config.js'
 import { runAgentTurn } from './agentLoop.js'
-import { box, terminalWidth } from '../ui/terminal.js'
+import { box, padVisible, terminalWidth } from '../ui/terminal.js'
 
 export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter) {
   const providerConfig = getProviderConfigs(config).find((item) => item.id === provider.config.id) ?? provider.config
@@ -131,9 +131,10 @@ export function renderChatInputLines(options: ChatInputRenderOptions) {
   const phase = options.phase ?? 'IA pronta'
   const tasks = options.taskCount ?? 0
   const elapsed = formatMs(options.elapsedMs ?? 0)
-  const status = chalk.dim(`${phase}  •  tasks ${tasks}  •  tempo ${elapsed}  •  ${options.providerId}/${options.model}  •  agent ${options.agent}`)
+  const rawStatus = `${phase}  •  tasks ${tasks}  •  tempo ${elapsed}  •  ${options.providerId}/${options.model}  •  agent ${options.agent}`
+  const status = chalk.dim(padVisible(rawStatus, width))
   const inputBox = box('Você', chalk.bold(`› ${inputDraftDisplay(options.draft)}`), { width, color: chalk.green })
-  return [status, inputBox]
+  return [status, ...inputBox.split('\n')]
 }
 
 function appendPastedInput(draft: InputDraft, text: string) {
