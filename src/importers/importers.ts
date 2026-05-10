@@ -71,7 +71,7 @@ function codexAuthPaths() {
   return paths
 }
 
-const CHATGPT_SUBSCRIPTION_GUIDANCE = 'Sua assinatura do ChatGPT não libera API automaticamente. Para usar no OpenDeep, configure OPENAI_API_KEY (ou CODEX_API_KEY) no ambiente.'
+const CHATGPT_SUBSCRIPTION_GUIDANCE = 'Sua assinatura do ChatGPT não libera API automaticamente. Para usar no DeepCode, rode deepcode codex para OAuth oficial ou configure OPENAI_API_KEY/CODEX_API_KEY no ambiente.'
 
 export async function importCodexLocalAuth() {
   const envToken = process.env.CODEX_API_KEY ?? process.env.OPENAI_API_KEY

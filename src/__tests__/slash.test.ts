@@ -10,10 +10,12 @@ test('resolves slash aliases and bare slash', () => {
   assert.equal(resolveSlash('/use openai/gpt-4o')?.command, 'use')
   assert.equal(resolveSlash('/continue')?.command, 'continue')
   assert.equal(resolveSlash('/resume')?.command, 'continue')
+  assert.equal(resolveSlash('/allowall')?.command, 'allowall')
+  assert.equal(resolveSlash('/unsafe')?.command, 'allowall')
 })
 
 test('has rich command registry', () => {
-  for (const name of ['provider', 'api', 'model', 'use', 'continue', 'agent', 'project', 'sessions', 'new']) {
+  for (const name of ['provider', 'api', 'model', 'use', 'continue', 'agent', 'project', 'sessions', 'new', 'allowall']) {
     assert.ok(SLASH_COMMANDS.some((command) => command.name === name), `missing ${name}`)
   }
 })

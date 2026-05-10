@@ -91,6 +91,7 @@ export interface OpenDeepConfig {
   defaultModel: string
   providers: Record<string, ProviderConfigOverride>
   permissions: {
+    allowAll: boolean
     autoAllow: boolean
     allowShell: boolean
     allowWrite: boolean

@@ -5,6 +5,7 @@ import chalk from 'chalk'
 import { ChatRuntimeState, OpenDeepConfig, ProviderAdapter, ProviderConfig, SessionRecord, SlashCommand } from '../types.js'
 import { createProvider, getProviderConfigs, resolveModel } from '../providers/registry.js'
 import { safeError, redactObject } from '../security/redact.js'
+import { formatClassifiedError } from '../core/errors.js'
 import { renderCommandList, renderError, renderHeader, renderNotice, renderUserBubble } from '../ui/chatRenderer.js'
 import { resolveSlash, searchSlashCommands, SLASH_COMMANDS } from '../commands/slash.js'
 import { formatModelCatalog, modelsFor, normalizeModel, parseProviderModel } from '../providers/modelCatalog.js'
@@ -15,7 +16,7 @@ import { BUILTIN_AGENTS } from '../agents/agents.js'
 import { doctor } from '../doctor.js'
 import { formatPermissionRules, addPermissionRule, loadPermissionRules, PermissionCategory } from '../permissions/rules.js'
 import { getSecret } from '../security/secrets.js'
-import { importCodexLocalAuth } from '../importers/importers.js'
+import { saveConfig } from '../config/config.js'
 import { runAgentTurn } from './agentLoop.js'
 
 export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter) {
@@ -388,9 +389,17 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       renderNotice('Provedores', providerList(config))
       return { handled: true, exit: false, state }
     case 'codex': {
-      const result = await importCodexLocalAuth()
-      renderNotice('Codex', result.message)
-      if (result.imported) await applyProviderModel(state, 'codex-oauth', process.env.CODEX_MODEL ?? 'gpt-5.5')
+      const provider = providers.find((item) => item.id === 'codex-oauth')
+      if (!provider) {
+        renderError('Provider codex-oauth não encontrado.')
+        return { handled: true, exit: false, state }
+      }
+      renderNotice('Codex', await configureApiKey(provider))
+      if (!(await getSecret('CODEX_OAUTH_TOKEN'))) {
+        renderError('OAuth Codex não configurado.')
+        return { handled: true, exit: false, state }
+      }
+      await applyProviderModel(state, 'codex-oauth', process.env.CODEX_MODEL ?? 'gpt-5.5')
       return { handled: true, exit: false, state }
     }
     case 'provider': {
@@ -419,7 +428,13 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       const id = parsed.args.trim() || state.providerId
       const provider = providers.find((item) => item.id === id)
       if (!provider) renderError(`Provider não encontrado: ${id}`)
-      else renderNotice('API', await configureApiKey(provider))
+      else {
+        renderNotice('API', await configureApiKey(provider))
+        if (provider.id === 'codex-oauth') {
+          if (await getSecret('CODEX_OAUTH_TOKEN')) await applyProviderModel(state, 'codex-oauth', process.env.CODEX_MODEL ?? 'gpt-5.5')
+          else renderError('OAuth Codex não configurado.')
+        }
+      }
       return { handled: true, exit: false, state }
     }
     case 'models': {
@@ -600,8 +615,39 @@ async function handleSlash(text: string, state: ChatRuntimeState, config: OpenDe
       renderNotice('Tools', 'Tools are available to the active agent. Use natural language and the model will call tools when needed.')
       return { handled: true, exit: false, state }
     case 'permissions':
-      renderNotice('Permissões', formatPermissionRules(await loadPermissionRules(state.project.id)))
+      renderNotice('Permissões', [
+        `allowAll      ${config.permissions.allowAll ? 'ON — sem prompts, inclusive comandos destrutivos' : 'off'}`,
+        `autoAllow     ${config.permissions.autoAllow ? 'on' : 'off'}`,
+        '',
+        formatPermissionRules(await loadPermissionRules(state.project.id)),
+      ].join('\n'))
       return { handled: true, exit: false, state }
+    case 'allowall': {
+      const arg = parsed.args.trim().toLowerCase()
+      if (!arg || arg === 'status') {
+        renderNotice('AllowAll', config.permissions.allowAll
+          ? 'ON — DeepCode não perguntará permissão para nenhuma tool/comando. Use /allowall off para desligar.'
+          : 'off — DeepCode continua pedindo permissões quando necessário. Use /allowall on para liberar tudo.')
+        return { handled: true, exit: false, state }
+      }
+      if (!['on', 'off', 'true', 'false', '1', '0', 'yes', 'no'].includes(arg)) {
+        renderError('Uso: /allowall [on|off|status]')
+        return { handled: true, exit: false, state }
+      }
+      const enabled = ['on', 'true', '1', 'yes'].includes(arg)
+      config.permissions.allowAll = enabled
+      if (enabled) {
+        config.permissions.autoAllow = true
+        config.permissions.allowShell = true
+        config.permissions.allowWrite = true
+        config.permissions.allowNetwork = true
+      }
+      await saveConfig(config)
+      renderNotice('AllowAll', enabled
+        ? 'ON — todos os comandos/tools da IA serão permitidos sem perguntar. Cuidado: isso inclui comandos destrutivos solicitados pelo modelo.'
+        : 'off — permissões voltaram ao modo seguro/configurado.')
+      return { handled: true, exit: false, state }
+    }
     case 'allow':
     case 'deny': {
       const [permission, ...patternParts] = parsed.args.trim().split(/\s+/)
@@ -674,7 +720,7 @@ export async function runChat(config: OpenDeepConfig) {
         state.project = await setProjectSession(state.project, state.session.id)
       } catch (error) {
         if (error instanceof Error && /abort/i.test(error.name + error.message)) renderNotice('Interrompido', 'Resposta interrompida pelo usuário.')
-        else renderError(safeError(error))
+        else renderError(formatClassifiedError(error))
       }
     }
   } finally {

@@ -2,14 +2,14 @@ import { SlashCommand } from '../types.js'
 
 export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'help', aliases: ['?'], usage: '/help', description: 'Mostra todos os comandos com explicação.', category: 'Core', template: '/help' },
-  { name: 'exit', aliases: ['quit'], usage: '/exit', description: 'Fecha o OpenDeep.', category: 'Core', template: '/exit' },
+  { name: 'exit', aliases: ['quit'], usage: '/exit', description: 'Fecha o DeepCode.', category: 'Core', template: '/exit' },
   { name: 'clear', usage: '/clear', description: 'Limpa o contexto da sessão atual.', category: 'Core', template: '/clear' },
   { name: 'doctor', usage: '/doctor', description: 'Roda diagnóstico de ambiente/configuração.', category: 'Core', template: '/doctor' },
-  { name: 'codex', usage: '/codex', description: 'Importa login local do Codex/OpenAI.', category: 'Provider', template: '/codex' },
+  { name: 'codex', usage: '/codex', description: 'Faz login OAuth oficial OpenAI/Codex e ativa codex-oauth.', category: 'Provider', template: '/codex' },
   { name: 'provider', usage: '/provider [id]', description: 'Mostra ou troca o provedor atual.', category: 'Provider', template: '/provider ' },
   { name: 'providers', usage: '/providers', description: 'Lista provedores disponíveis.', category: 'Provider', template: '/providers' },
   { name: 'login', aliases: ['setup'], usage: '/login <provider>', description: 'Alias de /api para logar/configurar provider.', category: 'Provider', template: '/login ' },
-  { name: 'api', usage: '/api <provider>', description: 'Configura API key com armazenamento seguro.', category: 'Provider', template: '/api ' },
+  { name: 'api', usage: '/api <provider>', description: 'Configura credencial com armazenamento seguro (codex-oauth usa OAuth).', category: 'Provider', template: '/api ' },
   { name: 'model', usage: '/model [provider/model]', description: 'Mostra ou troca modelo.', category: 'Model', template: '/model ' },
   { name: 'models', usage: '/models [provider]', description: 'Lista modelos recomendados.', category: 'Model', template: '/models ' },
   { name: 'use', usage: '/use <provider|provider/model>', description: 'Troca provider/model em um passo.', category: 'Model', template: '/use ' },
@@ -25,6 +25,7 @@ export const SLASH_COMMANDS: SlashCommand[] = [
   { name: 'config', usage: '/config', description: 'Mostra configuração com secrets redigidos.', category: 'Config', template: '/config' },
   { name: 'tools', usage: '/tools', description: 'Lista ferramentas locais disponíveis.', category: 'Tools', template: '/tools' },
   { name: 'permissions', usage: '/permissions', description: 'Lista regras de permissão do projeto.', category: 'Permissions', template: '/permissions' },
+  { name: 'allowall', aliases: ['unsafe'], usage: '/allowall [on|off|status]', description: 'Liga modo sem prompts: a IA pode executar qualquer comando até desligar.', category: 'Permissions', template: '/allowall on' },
   { name: 'allow', usage: '/allow <permission> <pattern>', description: 'Adiciona regra allow para o projeto.', category: 'Permissions', template: '/allow shell ' },
   { name: 'deny', usage: '/deny <permission> <pattern>', description: 'Adiciona regra deny para o projeto.', category: 'Permissions', template: '/deny shell ' },
 ]

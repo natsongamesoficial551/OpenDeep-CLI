@@ -5,7 +5,21 @@ export const RECOMMENDED_MODELS: Record<string, string[]> = {
   anthropic: ['claude-3-5-sonnet-latest', 'claude-3-5-haiku-latest', 'claude-opus-4-1'],
   gemini: ['gemini-2.5-flash', 'gemini-2.5-pro', 'gemini-1.5-pro'],
   openrouter: ['openai/gpt-4o-mini', 'anthropic/claude-3.5-sonnet', 'google/gemini-2.5-flash'],
-  nvidia: ['nvidia/llama-3.3-nemotron-super-49b-v1.5', 'nvidia/llama-3.1-nemotron-70b-instruct', 'meta/llama-3.1-70b-instruct', 'mistralai/mixtral-8x7b-instruct-v0.1'],
+  nvidia: [
+    'deepseek-ai/deepseek-v4-flash',
+    'deepseek-ai/deepseek-v4-pro',
+    'nvidia/llama-3.3-nemotron-super-49b-v1.5',
+    'nvidia/llama-3.3-nemotron-super-49b-v1',
+    'nvidia/llama-3.1-nemotron-ultra-253b-v1',
+    'nvidia/llama-3.1-nemotron-nano-8b-v1',
+    'qwen/qwen3-coder-480b-a35b-instruct',
+    'qwen/qwen3-next-80b-a3b-instruct',
+    'qwen/qwen2.5-coder-32b-instruct',
+    'google/gemma-3-27b-it',
+    'microsoft/phi-4-mini-instruct',
+    'meta/llama-3.2-90b-vision-instruct',
+    'meta/llama-3.2-11b-vision-instruct',
+  ],
   deepseek: ['deepseek-chat', 'deepseek-reasoner'],
   groq: ['llama-3.3-70b-versatile', 'llama-3.1-8b-instant'],
   mistral: ['mistral-large-latest', 'codestral-latest', 'ministral-8b-latest'],
@@ -19,8 +33,8 @@ export const RECOMMENDED_MODELS: Record<string, string[]> = {
   bedrock: ['anthropic.claude-3-5-sonnet-20240620-v1:0'],
   vertex: ['gemini-2.5-flash', 'gemini-2.5-pro'],
   foundry: ['claude-sonnet-4-5'],
-  codex: ['gpt-5.5', 'gpt-4o-mini'],
-  'codex-oauth': ['gpt-5.5'],
+  codex: ['gpt-5.5', 'gpt-5.3-codex', 'gpt-4o-mini'],
+  'codex-oauth': ['gpt-5.5', 'gpt-5.3-codex'],
 }
 
 export function modelsFor(provider: ProviderConfig) {

@@ -5,7 +5,7 @@ import { runChat, runPrompt } from './chat/chat.js'
 import { getProviderConfigs } from './providers/registry.js'
 import { redactObject, safeError } from './security/redact.js'
 import { doctor } from './doctor.js'
-import { previewImports, importCodexLocalAuth } from './importers/importers.js'
+import { previewImports } from './importers/importers.js'
 import { formatModelCatalog, parseProviderModel } from './providers/modelCatalog.js'
 import { listSessions, loadSession, formatSessionList } from './sessions/sessionStore.js'
 import { formatProjectList, listProjects, upsertProject } from './projects/projectStore.js'
@@ -15,12 +15,15 @@ import { formatToolList } from './tools/registry.js'
 import { addPermissionRule, formatPermissionRules, loadPermissionRules, PermissionCategory } from './permissions/rules.js'
 
 export async function runCli(argv: string[]) {
+  if (argv[1]?.toLowerCase().endsWith('opendeep')) {
+    console.warn('Aviso: opendeep foi renomeado para deepcode. O alias legado continuará funcionando temporariamente.')
+  }
   const pkg = JSON.parse(await readFile(new URL('../package.json', import.meta.url), 'utf8')) as { version: string }
   const program = new Command()
 
   program
-    .name('opendeep')
-    .description('OpenDeep terminal AI CLI')
+    .name('deepcode')
+    .description('DeepCode terminal AI CLI')
     .version(pkg.version)
     .argument('[prompt...]', 'Prompt to run once')
     .action(async (prompt: string[]) => {
@@ -93,17 +96,14 @@ export async function runCli(argv: string[]) {
   }
 
   program.command('codex')
-    .description('Import local Codex/OpenAI login and set Codex as default provider')
+    .description('Run official OpenAI/Codex OAuth login and set Codex as default provider')
     .action(async () => {
-      const result = await importCodexLocalAuth()
-      console.log(result.message)
-      if (result.imported) {
-        const next = await updateConfig((config) => {
-          config.defaultProvider = 'codex-oauth'
-          config.defaultModel = process.env.CODEX_MODEL ?? 'gpt-5.5'
-        })
-        console.log(`Default: ${next.defaultProvider}/${next.defaultModel}`)
-      }
+      await configureProvider('codex-oauth')
+      const next = await updateConfig((config) => {
+        config.defaultProvider = 'codex-oauth'
+        config.defaultModel = process.env.CODEX_MODEL ?? 'gpt-5.5'
+      })
+      console.log(`Default: ${next.defaultProvider}/${next.defaultModel}`)
     })
 
   program.command('auth')
@@ -160,6 +160,32 @@ export async function runCli(argv: string[]) {
       console.log(`allow ${permission} ${pattern.join(' ')}`)
     })
 
+  program.command('allowall')
+    .alias('unsafe')
+    .description('Toggle full no-prompt permission mode for AI tools, including dangerous shell commands')
+    .argument('[value]', 'on/off/status', 'status')
+    .action(async (value: string) => {
+      const raw = value.toLowerCase()
+      if (raw === 'status') {
+        const config = await loadConfig()
+        console.log(config.permissions.allowAll ? 'allowAll=on' : 'allowAll=off')
+        return
+      }
+      if (!['on', 'off', 'true', 'false', '1', '0', 'yes', 'no'].includes(raw)) throw new Error('Usage: deepcode allowall [on|off|status]')
+      const enabled = ['on', 'true', '1', 'yes'].includes(raw)
+      const next = await updateConfig((config) => {
+        config.permissions.allowAll = enabled
+        if (enabled) {
+          config.permissions.autoAllow = true
+          config.permissions.allowShell = true
+          config.permissions.allowWrite = true
+          config.permissions.allowNetwork = true
+        }
+      })
+      console.log(`allowAll=${next.permissions.allowAll ? 'on' : 'off'}`)
+      if (next.permissions.allowAll) console.warn('WARNING: DeepCode will not ask before executing any AI tool/command, including destructive shell commands.')
+    })
+
   program.command('deny')
     .description('Deny a permission pattern for current project')
     .argument('<permission>')
@@ -173,10 +199,25 @@ export async function runCli(argv: string[]) {
   program.command('config')
     .description('Show safe config')
     .option('--path', 'Print config path')
+    .option('--allow-all <value>', 'Set permissions.allowAll true/false (no prompts, unsafe)')
     .option('--auto-allow <value>', 'Set permissions.autoAllow true/false')
-    .action(async (options: { path?: boolean; autoAllow?: string }) => {
+    .action(async (options: { path?: boolean; allowAll?: string; autoAllow?: string }) => {
       if (options.path) {
         console.log(await configPath())
+        return
+      }
+      if (options.allowAll !== undefined) {
+        const value = options.allowAll === 'true'
+        await updateConfig((config) => {
+          config.permissions.allowAll = value
+          if (value) {
+            config.permissions.autoAllow = true
+            config.permissions.allowShell = true
+            config.permissions.allowWrite = true
+            config.permissions.allowNetwork = true
+          }
+        })
+        console.log(`permissions.allowAll=${value}`)
         return
       }
       if (options.autoAllow !== undefined) {

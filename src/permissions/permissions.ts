@@ -23,10 +23,12 @@ export class PermissionManager {
   }
 
   canAutoAllow(category: PermissionCategory, description: string, options: { command?: string } = {}) {
+    if (this.config.permissions.allowAll) return true
     return !(category === 'shell' && this.isDangerousShell(options.command ?? description))
   }
 
   async require(category: PermissionCategory, description: string, options: { command?: string; pattern?: string; metadata?: Record<string, unknown> } = {}) {
+    if (this.config.permissions.allowAll) return true
     const dangerousShell = category === 'shell' && !this.canAutoAllow(category, description, options)
     if (this.config.permissions.autoAllow && !dangerousShell) return true
     if (category === 'read') return true

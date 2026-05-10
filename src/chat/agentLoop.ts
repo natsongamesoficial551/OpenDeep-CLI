@@ -1,7 +1,8 @@
 import { getAgent } from '../agents/agents.js'
 import { PermissionManager } from '../permissions/permissions.js'
 import { ProviderAdapter, ChatRuntimeState, OpenDeepConfig, ChatMessage, ToolCall } from '../types.js'
-import { renderAssistantBubble, renderToolCall, renderToolError, renderToolResult, renderNotice } from '../ui/chatRenderer.js'
+import { renderAssistantBubble, renderToolError, renderToolResult, renderNotice } from '../ui/chatRenderer.js'
+import { renderTaskFinish, renderTaskStart } from '../ui/taskTracker.js'
 import { appendMessage, saveSession } from '../sessions/sessionStore.js'
 import { BUILTIN_TOOLS, runTool } from '../tools/registry.js'
 import { toolsToSpecs } from '../tools/providerSchema.js'
@@ -29,7 +30,7 @@ function systemPrompt(state: ChatRuntimeState) {
   return [
     agent.systemPrompt,
     '',
-    'You are OpenDeep, a terminal coding agent.',
+    'You are DeepCode, a terminal coding agent.',
     `Current project path: ${state.project.path}`,
     'Use tools when you need to inspect files, search code, edit files, create directories, or run commands.',
     'If the user explicitly asks you to create files or a project, do not stop after checking with glob/list; use mkdir and write to create the requested files.',
@@ -57,15 +58,17 @@ function createToolContext(state: ChatRuntimeState, config: OpenDeepConfig, sign
 }
 
 async function executeToolCall(call: ToolCall, ctx: ToolContext): Promise<ChatMessage> {
-  renderToolCall(call)
+  const task = renderTaskStart(call.name, call.arguments)
   if (call.parseError) {
     const content = `Tool arguments JSON parse error: ${call.parseError}\nRaw arguments: ${call.rawArguments ?? ''}`
+    renderTaskFinish(call.name, task.label, task.startedAt, 'error')
     renderToolError(call.name, content)
     return { role: 'tool', name: call.name, toolCallId: call.id, content }
   }
 
   try {
     const result = await runTool(call.name, call.arguments, ctx)
+    renderTaskFinish(call.name, task.label, task.startedAt, 'done')
     renderToolResult(call.name, result)
     return {
       role: 'tool',
@@ -76,6 +79,7 @@ async function executeToolCall(call: ToolCall, ctx: ToolContext): Promise<ChatMe
     }
   } catch (error) {
     const content = `Tool ${call.name} failed: ${safeError(error)}`
+    renderTaskFinish(call.name, task.label, task.startedAt, ctx.signal?.aborted ? 'cancelled' : 'error')
     renderToolError(call.name, error)
     return { role: 'tool', name: call.name, toolCallId: call.id, content }
   }

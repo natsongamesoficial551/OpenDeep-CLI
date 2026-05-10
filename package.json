@@ -1,14 +1,16 @@
 {
   "name": "opendeep",
   "version": "0.1.0",
-  "description": "OpenDeep terminal AI CLI with multi-provider chat, safe local tools, and extensible agent workflows.",
+  "description": "DeepCode terminal AI CLI with multi-provider chat, safe local tools, OAuth login, and extensible agent workflows.",
   "type": "module",
   "bin": {
+    "deepcode": "./bin/deepcode",
     "opendeep": "./bin/opendeep"
   },
   "files": [
     "bin/",
     "dist/",
+    "!dist/__tests__/",
     "README.md",
     "LICENSE"
   ],

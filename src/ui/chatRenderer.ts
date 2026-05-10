@@ -12,7 +12,7 @@ export function renderHeader(state: ChatRuntimeState) {
     ['session', `${state.session.title} (${state.session.id.slice(0, 8)})`],
     ['hint', 'digite / para comandos, /exit para sair'],
   ])
-  console.log(box('OpenDeep', body, { color: chalk.cyan, width: terminalWidth() }))
+  console.log(box('DeepCode', body, { color: chalk.cyan, width: terminalWidth() }))
 }
 
 export function renderUserBubble(text: string) {
@@ -21,7 +21,7 @@ export function renderUserBubble(text: string) {
 
 export function renderAssistantStart() {
   const width = terminalWidth()
-  console.log('\n' + chalk.blue('╭─') + chalk.bold.blue(' OpenDeep ') + chalk.blue('─'.repeat(Math.max(0, width - 13)) + '╮'))
+  console.log('\n' + chalk.blue('╭─') + chalk.bold.blue(' DeepCode ') + chalk.blue('─'.repeat(Math.max(0, width - 13)) + '╮'))
   process.stdout.write(chalk.blue('│ '))
 }
 
@@ -33,7 +33,7 @@ export function renderAssistantEnd() {
 
 export function renderAssistantBubble(text: string) {
   if (!text.trim()) return
-  console.log('\n' + box('OpenDeep', text, { color: chalk.blue }))
+  console.log('\n' + box('DeepCode', text, { color: chalk.blue }))
 }
 
 export function renderNotice(title: string, text: string) {

@@ -3,7 +3,7 @@ import { mkdir, readFile, writeFile, chmod } from 'node:fs/promises'
 import { join } from 'node:path'
 import { z } from 'zod'
 import { OpenDeepConfig } from '../types.js'
-import { getConfigDirs } from './paths.js'
+import { getConfigDirs, ensureDeepCodeDirsMigrated } from './paths.js'
 
 const ConfigSchema = z.object({
   defaultProvider: z.string().default('openai'),
@@ -21,11 +21,12 @@ const ConfigSchema = z.object({
     apiKey: z.string().optional(),
   })).default({}),
   permissions: z.object({
+    allowAll: z.boolean().default(false),
     autoAllow: z.boolean().default(false),
     allowShell: z.boolean().default(false),
     allowWrite: z.boolean().default(false),
     allowNetwork: z.boolean().default(true),
-  }).default({ autoAllow: false, allowShell: false, allowWrite: false, allowNetwork: true }),
+  }).default({ allowAll: false, autoAllow: false, allowShell: false, allowWrite: false, allowNetwork: true }),
   ui: z.object({
     stream: z.boolean().default(true),
     color: z.boolean().default(true),
@@ -35,6 +36,7 @@ const ConfigSchema = z.object({
 export const DEFAULT_CONFIG: OpenDeepConfig = ConfigSchema.parse({})
 
 export async function configPath() {
+  await ensureDeepCodeDirsMigrated()
   const dirs = getConfigDirs()
   await mkdir(dirs.config, { recursive: true })
   return join(dirs.config, 'config.json')
