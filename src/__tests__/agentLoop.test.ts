@@ -6,6 +6,7 @@ import { join } from 'node:path'
 import { runAgentTurn, toolsForAgent } from '../chat/agentLoop.js'
 import { DEFAULT_CONFIG } from '../config/config.js'
 import { ProviderAdapter, ChatResponse, ChatRuntimeState } from '../types.js'
+import { AgentEvent, formatAgentEventJsonl } from '../core/agentEvents.js'
 
 class FakeToolProvider implements ProviderAdapter {
   config = { id: 'fake', name: 'Fake', kind: 'openai-compatible' as const, defaultModel: 'fake' }
@@ -119,6 +120,32 @@ test('agent loop executes tool calls and persists results', async () => {
     assert.equal(provider.calls, 2)
     assert.equal(state.session.messages.some((message) => message.role === 'tool' && message.name === 'glob'), true)
     assert.equal(state.session.messages.at(-1)?.role, 'assistant')
+  } finally {
+    await cleanup()
+  }
+})
+
+test('agent loop emits structured lifecycle events for professional headless/TUI runtimes', async () => {
+  const { state, cleanup } = await makeState()
+  try {
+    const events: AgentEvent[] = []
+    const provider = new FakeToolProvider()
+    const answer = await runAgentTurn({ state, config: DEFAULT_CONFIG, provider, onEvent: (event) => { events.push(event) } })
+
+    assert.equal(answer, 'Encontrei arquivos.')
+    assert.deepEqual(events.map((event) => event.type), [
+      'turn.started',
+      'assistant.message',
+      'tool.started',
+      'tool.completed',
+      'assistant.message',
+      'turn.completed',
+    ])
+    assert.deepEqual(events.map((event) => event.sequence), [1, 2, 3, 4, 5, 6])
+    assert.equal(events.every((event) => event.sessionId === state.session.id), true)
+    assert.equal(events[2]?.tool, 'glob')
+    assert.equal(events[3]?.status, 'done')
+    assert.match(formatAgentEventJsonl(events[0]!), /^\{"type":"turn\.started"/)
   } finally {
     await cleanup()
   }

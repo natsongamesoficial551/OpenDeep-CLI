@@ -1,9 +1,10 @@
 import { existsSync } from 'node:fs'
-import { mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises'
+import { appendFile, mkdir, readFile, writeFile, readdir, unlink } from 'node:fs/promises'
 import { basename, join } from 'node:path'
 import { randomUUID } from 'node:crypto'
 import { ChatMessage, ProjectRecord, SessionRecord } from '../types.js'
 import { getConfigDirs } from '../config/paths.js'
+import { AgentEvent, formatAgentEventJsonl } from '../core/agentEvents.js'
 
 async function sessionsDir() {
   const dir = join(getConfigDirs().data, 'sessions')
@@ -13,6 +14,23 @@ async function sessionsDir() {
 
 function sessionPath(dir: string, id: string) {
   return join(dir, `${id}.json`)
+}
+
+function sessionEventsPath(dir: string, id: string) {
+  return join(dir, `${id}.events.jsonl`)
+}
+
+export async function appendSessionEvent(event: AgentEvent) {
+  const dir = await sessionsDir()
+  await appendFile(sessionEventsPath(dir, event.sessionId), formatAgentEventJsonl(event))
+}
+
+export async function loadSessionEvents(id: string) {
+  const dir = await sessionsDir()
+  const file = sessionEventsPath(dir, id)
+  if (!existsSync(file)) return []
+  const lines = (await readFile(file, 'utf8')).split('\n').filter(Boolean)
+  return lines.map((line) => JSON.parse(line) as AgentEvent)
 }
 
 export function sessionTitleFromPrompt(prompt: string) {

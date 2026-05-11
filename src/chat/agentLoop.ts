@@ -8,6 +8,7 @@ import { BUILTIN_TOOLS, runTool } from '../tools/registry.js'
 import { toolsToSpecs } from '../tools/providerSchema.js'
 import { ToolDefinition, ToolContext } from '../tools/tool.js'
 import { safeError } from '../security/redact.js'
+import { AgentEventSink, createAgentEventEmitter } from '../core/agentEvents.js'
 
 const MAX_AGENT_ITERATIONS = 40
 const WRITE_INTENT = /\b(cri(e|ar|a)|criar|crie|ger(e|ar)|gerar|fa(ç|c)a|fazer|write|create|edit|editar|modificar|salvar|arquivo|site|index\.html|style\.css|script\.js)\b/i
@@ -181,19 +182,28 @@ function createToolContext(state: ChatRuntimeState, config: OpenDeepConfig, sign
   }
 }
 
-async function executeToolCall(call: ToolCall, ctx: ToolContext, statusContext: { providerId: string; model: string; taskIndex: number }): Promise<ChatMessage> {
-  const task = renderTaskStart(call.name, call.arguments, statusContext)
+async function executeToolCall(call: ToolCall, ctx: ToolContext, statusContext: { providerId: string; model: string; taskIndex: number; render: boolean }, emit?: ReturnType<typeof createAgentEventEmitter>): Promise<ChatMessage> {
+  const task = statusContext.render
+    ? renderTaskStart(call.name, call.arguments, statusContext)
+    : { label: call.name, startedAt: Date.now(), context: statusContext }
+  await emit?.('tool.started', { tool: call.name, callId: call.id, arguments: call.arguments, taskIndex: statusContext.taskIndex })
   if (call.parseError) {
     const content = `Tool arguments JSON parse error: ${call.parseError}\nRaw arguments: ${call.rawArguments ?? ''}`
-    renderTaskFinish(call.name, task.label, task.startedAt, 'error', task.context)
-    renderToolError(call.name, content)
+    if (statusContext.render) {
+      renderTaskFinish(call.name, task.label, task.startedAt, 'error', task.context)
+      renderToolError(call.name, content)
+    }
+    await emit?.('tool.failed', { tool: call.name, callId: call.id, status: 'error', error: content, taskIndex: statusContext.taskIndex })
     return { role: 'tool', name: call.name, toolCallId: call.id, content }
   }
 
   try {
     const result = await runTool(call.name, call.arguments, ctx)
-    renderTaskFinish(call.name, task.label, task.startedAt, 'done', task.context)
-    renderToolResult(call.name, result)
+    if (statusContext.render) {
+      renderTaskFinish(call.name, task.label, task.startedAt, 'done', task.context)
+      renderToolResult(call.name, result)
+    }
+    await emit?.('tool.completed', { tool: call.name, callId: call.id, status: 'done', title: result.title, output: result.output, metadata: result.metadata, taskIndex: statusContext.taskIndex })
     return {
       role: 'tool',
       name: call.name,
@@ -203,88 +213,109 @@ async function executeToolCall(call: ToolCall, ctx: ToolContext, statusContext: 
     }
   } catch (error) {
     const content = `Tool ${call.name} failed: ${safeError(error)}`
-    renderTaskFinish(call.name, task.label, task.startedAt, ctx.signal?.aborted ? 'cancelled' : 'error', task.context)
-    renderToolError(call.name, error)
+    if (statusContext.render) {
+      renderTaskFinish(call.name, task.label, task.startedAt, ctx.signal?.aborted ? 'cancelled' : 'error', task.context)
+      renderToolError(call.name, error)
+    }
+    await emit?.('tool.failed', { tool: call.name, callId: call.id, status: ctx.signal?.aborted ? 'cancelled' : 'error', error: content, taskIndex: statusContext.taskIndex })
     return { role: 'tool', name: call.name, toolCallId: call.id, content }
   }
 }
 
-async function fallbackTurn(provider: ProviderAdapter, state: ChatRuntimeState, config: OpenDeepConfig, signal?: AbortSignal) {
+async function fallbackTurn(provider: ProviderAdapter, state: ChatRuntimeState, config: OpenDeepConfig, signal?: AbortSignal, render = true) {
   const request = { messages: state.session.messages, model: state.model, ...(signal ? { signal } : {}) }
   if (config.ui.stream) {
     let answer = ''
     for await (const chunk of provider.stream(request)) answer += chunk
-    renderAssistantBubble(answer)
+    if (render) renderAssistantBubble(answer)
     appendMessage(state.session, { role: 'assistant', content: answer })
     return answer
   }
   const answer = await provider.complete(request)
-  renderAssistantBubble(answer)
+  if (render) renderAssistantBubble(answer)
   appendMessage(state.session, { role: 'assistant', content: answer })
   return answer
 }
 
-export async function runAgentTurn(input: { state: ChatRuntimeState; config: OpenDeepConfig; provider: ProviderAdapter; signal?: AbortSignal | undefined }) {
-  const { state, config, provider, signal } = input
-  const tools = toolsForAgent(state.agent, state.session.messages)
-  if (!provider.completeWithTools || tools.length === 0) {
-    return fallbackTurn(provider, state, config, signal)
-  }
+export async function runAgentTurn(input: { state: ChatRuntimeState; config: OpenDeepConfig; provider: ProviderAdapter; signal?: AbortSignal | undefined; onEvent?: AgentEventSink | undefined; render?: boolean | undefined }) {
+  const { state, config, provider, signal, onEvent } = input
+  const render = input.render !== false
+  const emit = createAgentEventEmitter({ sessionId: state.session.id, onEvent })
+  await emit('turn.started', { providerId: state.providerId, model: state.model, agent: state.agent })
 
-  const toolSpecs = toolsToSpecs(tools)
-  const ctx = createToolContext(state, config, signal)
-  let finalAnswer = ''
-  let taskIndex = state.session.messages.filter((message) => message.role === 'tool').length
+  try {
+    const tools = toolsForAgent(state.agent, state.session.messages)
+    if (!provider.completeWithTools || tools.length === 0) {
+      const answer = await fallbackTurn(provider, state, config, signal, render)
+      await emit('assistant.message', { content: answer, toolCalls: [] })
+      await emit('turn.completed', { status: 'done', answer })
+      return answer
+    }
 
-  for (let iteration = 0; iteration < MAX_AGENT_ITERATIONS; iteration += 1) {
-    let response
-    try {
-      response = await provider.completeWithTools({
-        messages: messagesWithSystem(state),
-        model: state.model,
-        tools: toolSpecs,
-        toolChoice: 'auto',
-        ...(signal ? { signal } : {}),
-      })
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error)
-      if (/tool_choice|auto tool choice|tool-call-parser|enable-auto-tool-choice/i.test(message)) {
-        return fallbackTurn(provider, state, config, signal)
+    const toolSpecs = toolsToSpecs(tools)
+    const ctx = createToolContext(state, config, signal)
+    let finalAnswer = ''
+    let taskIndex = state.session.messages.filter((message) => message.role === 'tool').length
+
+    for (let iteration = 0; iteration < MAX_AGENT_ITERATIONS; iteration += 1) {
+      let response
+      try {
+        response = await provider.completeWithTools({
+          messages: messagesWithSystem(state),
+          model: state.model,
+          tools: toolSpecs,
+          toolChoice: 'auto',
+          ...(signal ? { signal } : {}),
+        })
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        if (/tool_choice|auto tool choice|tool-call-parser|enable-auto-tool-choice/i.test(message)) {
+          const answer = await fallbackTurn(provider, state, config, signal, render)
+          await emit('assistant.message', { content: answer, toolCalls: [] })
+          await emit('turn.completed', { status: 'done', answer, fallback: 'tool_choice_rejected' })
+          return answer
+        }
+        throw error
       }
-      throw error
+
+      const textualCommands = commandToolCallsFromText(response.content)
+      const toolCalls = response.toolCalls?.length ? response.toolCalls : textualCommands.calls
+      const assistantContent = response.toolCalls?.length ? response.content : textualCommands.cleanedContent
+
+      const assistantMessage: ChatMessage = {
+        role: 'assistant',
+        content: assistantContent,
+        ...(toolCalls.length ? { toolCalls } : {}),
+      }
+      appendMessage(state.session, assistantMessage)
+      await emit('assistant.message', { content: assistantContent, toolCalls: toolCalls.map((call) => ({ id: call.id, name: call.name, arguments: call.arguments })) })
+      if (assistantContent.trim()) {
+        finalAnswer += assistantContent
+        if (render) renderAssistantBubble(assistantContent)
+      }
+
+      if (!toolCalls.length) {
+        await saveSession(state.session)
+        await emit('turn.completed', { status: 'done', answer: finalAnswer })
+        return finalAnswer
+      }
+
+      for (const call of toolCalls) {
+        taskIndex += 1
+        const toolMessage = await executeToolCall(call, ctx, { providerId: state.providerId, model: state.model, taskIndex, render }, emit)
+        appendMessage(state.session, toolMessage)
+        await saveSession(state.session)
+      }
     }
 
-    const textualCommands = commandToolCallsFromText(response.content)
-    const toolCalls = response.toolCalls?.length ? response.toolCalls : textualCommands.calls
-    const assistantContent = response.toolCalls?.length ? response.content : textualCommands.cleanedContent
-
-    const assistantMessage: ChatMessage = {
-      role: 'assistant',
-      content: assistantContent,
-      ...(toolCalls.length ? { toolCalls } : {}),
-    }
-    appendMessage(state.session, assistantMessage)
-    if (assistantContent.trim()) {
-      finalAnswer += assistantContent
-      renderAssistantBubble(assistantContent)
-    }
-
-    if (!toolCalls.length) {
-      await saveSession(state.session)
-      return finalAnswer
-    }
-
-    for (const call of toolCalls) {
-      taskIndex += 1
-      const toolMessage = await executeToolCall(call, ctx, { providerId: state.providerId, model: state.model, taskIndex })
-      appendMessage(state.session, toolMessage)
-      await saveSession(state.session)
-    }
+    const limitMessage = `Agent loop stopped after ${MAX_AGENT_ITERATIONS} tool iterations.`
+    if (render) renderNotice('Agent loop', limitMessage)
+    appendMessage(state.session, { role: 'assistant', content: limitMessage })
+    await saveSession(state.session)
+    await emit('turn.completed', { status: 'max_iterations', answer: finalAnswer || limitMessage })
+    return finalAnswer || limitMessage
+  } catch (error) {
+    await emit('turn.failed', { status: 'error', error: safeError(error) })
+    throw error
   }
-
-  const limitMessage = `Agent loop stopped after ${MAX_AGENT_ITERATIONS} tool iterations.`
-  renderNotice('Agent loop', limitMessage)
-  appendMessage(state.session, { role: 'assistant', content: limitMessage })
-  await saveSession(state.session)
-  return finalAnswer || limitMessage
 }

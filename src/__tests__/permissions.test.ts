@@ -20,14 +20,15 @@ test('autoAllow eligibility excludes dangerous shell commands', () => {
   assert.equal(permissions.canAutoAllow('shell', 'rm -fr /', { command: 'rm -fr /' }), false)
 })
 
-test('allowAll explicitly bypasses every permission prompt including dangerous shell commands', async () => {
+test('allowAll still hard-blocks destructive shell commands while allowing normal autonomous tools', async () => {
   const permissions = new PermissionManager({
     ...DEFAULT_CONFIG,
     permissions: { ...DEFAULT_CONFIG.permissions, allowAll: true },
   }, 'test-allow-all')
 
-  assert.equal(permissions.canAutoAllow('shell', 'rm -rf /', { command: 'rm -rf /' }), true)
-  assert.equal(await permissions.require('shell', 'rm -rf /', { command: 'rm -rf /' }), true)
+  assert.equal(permissions.canAutoAllow('shell', 'rm -rf /', { command: 'rm -rf /' }), false)
+  assert.equal(await permissions.require('shell', 'rm -rf /', { command: 'rm -rf /' }), false)
+  assert.equal(await permissions.require('shell', 'echo ok', { command: 'echo ok' }), true)
   assert.equal(await permissions.require('write', 'write package.json'), true)
   assert.equal(await permissions.require('network', 'https://example.com'), true)
 })

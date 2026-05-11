@@ -32,6 +32,15 @@ export async function runCli(argv: string[]) {
       else await runChat(config)
     })
 
+  program.command('run')
+    .description('Run one prompt headlessly; supports machine-readable JSONL events')
+    .argument('<prompt...>')
+    .option('--format <format>', 'Output format: text or jsonl', 'text')
+    .action(async (prompt: string[], options: { format?: string }) => {
+      const format = options.format === 'jsonl' ? 'jsonl' : 'text'
+      await runPrompt(prompt.join(' '), await loadConfig(), { format, persistEvents: true })
+    })
+
   program.command('providers')
     .description('List supported providers')
     .action(async () => {

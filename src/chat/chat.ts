@@ -10,7 +10,7 @@ import { renderCommandList, renderError, renderHeader, renderNotice, renderUserB
 import { resolveSlash, searchSlashCommands, SLASH_COMMANDS } from '../commands/slash.js'
 import { formatModelCatalog, modelsFor, normalizeModel, parseProviderModel } from '../providers/modelCatalog.js'
 import { configureApiKey } from '../auth/auth.js'
-import { appendMessage, createSession, formatSessionList, listSessions, loadSession, saveSession } from '../sessions/sessionStore.js'
+import { appendMessage, appendSessionEvent, createSession, formatSessionList, listSessions, loadSession, saveSession } from '../sessions/sessionStore.js'
 import { formatProjectList, listProjects, setProjectSession, upsertProject, createWorkspaceProject, defaultProjectsRoot, projectCreationTargetFromPrompt } from '../projects/projectStore.js'
 import { formatAgentList, getAgent, listAgents, removeCustomAgent, saveCustomAgent } from '../agents/agents.js'
 import { doctor } from '../doctor.js'
@@ -19,8 +19,15 @@ import { getSecret } from '../security/secrets.js'
 import { saveConfig } from '../config/config.js'
 import { runAgentTurn } from './agentLoop.js'
 import { box, padVisible, terminalWidth } from '../ui/terminal.js'
+import { AgentEventSink, formatAgentEventJsonl } from '../core/agentEvents.js'
 
-export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter) {
+export type RunPromptOptions = {
+  onEvent?: AgentEventSink | undefined
+  format?: 'text' | 'jsonl' | undefined
+  persistEvents?: boolean | undefined
+}
+
+export async function runPromptWithProvider(prompt: string, config: OpenDeepConfig, provider: ProviderAdapter, options: RunPromptOptions = {}) {
   const providerConfig = getProviderConfigs(config).find((item) => item.id === provider.config.id) ?? provider.config
   const project = await upsertProject(process.cwd())
   const model = config.defaultModel ? normalizeModel(providerConfig.id, config.defaultModel) : normalizeModel(providerConfig.id, resolveModel(providerConfig) || providerConfig.defaultModel)
@@ -33,19 +40,30 @@ export async function runPromptWithProvider(prompt: string, config: OpenDeepConf
     session,
   }
 
-  renderUserBubble(prompt)
+  const onEvent: AgentEventSink | undefined = options.format === 'jsonl'
+    ? async (event) => {
+      if (options.persistEvents) await appendSessionEvent(event)
+      output.write(formatAgentEventJsonl(event))
+      await options.onEvent?.(event)
+    }
+    : async (event) => {
+      if (options.persistEvents) await appendSessionEvent(event)
+      await options.onEvent?.(event)
+    }
+
+  if (options.format !== 'jsonl') renderUserBubble(prompt)
   appendMessage(state.session, { role: 'user', content: prompt })
-  await runAgentTurn({ state, config, provider })
+  await runAgentTurn({ state, config, provider, onEvent, render: options.format !== 'jsonl' })
   state.session.provider = state.providerId
   state.session.model = state.model
   state.session.agent = state.agent
   await saveSession(state.session)
 }
 
-export async function runPrompt(prompt: string, config: OpenDeepConfig) {
+export async function runPrompt(prompt: string, config: OpenDeepConfig, options: RunPromptOptions = {}) {
   const providerConfig = getProviderConfigs(config).find((provider) => provider.id === config.defaultProvider)
   if (!providerConfig) throw new Error(`Default provider not found: ${config.defaultProvider}`)
-  await runPromptWithProvider(prompt, config, createProvider(providerConfig.id, config))
+  await runPromptWithProvider(prompt, config, createProvider(providerConfig.id, config), options)
 }
 
 function providerList(config: OpenDeepConfig) {

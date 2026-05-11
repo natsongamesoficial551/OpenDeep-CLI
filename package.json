@@ -20,7 +20,7 @@
     "start": "node dist/index.js",
     "link:local": "npm run build && npm link",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "test": "node --test dist/__tests__/*.test.js",
+    "test": "node --test --test-concurrency=1 dist/__tests__/*.test.js",
     "pretest": "npm run build",
     "prepack": "npm run build"
   },
